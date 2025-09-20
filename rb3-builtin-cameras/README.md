@@ -2,7 +2,9 @@
 
 The [Qualcomm Dragonwing RB3 Gen 2 Development Kit](https://qc-ai-test.gitbook.io/qc-ai-test-docs/device-setup/rb3-gen2-vision-kit) has two built-in cameras, but you can only read data from the cameras using a GStreamer pipeline using the `qtiqmmfsrc` plugin (part of the IM SDK).
 
-To run:
+## Python
+
+To get data from the built-in cameras into a Python script:
 
 1. Ensure your RB3 Gen 2 Development Kit runs Ubuntu 24.
 2. Install dependencies:
@@ -31,3 +33,23 @@ To run:
     ```
 
 5. Images from the camera are stored in the `out/` directory.
+
+## Camera -> files
+
+To stream camera to data to a file (e.g. to use it in another environment), open a terminal on your device and run:
+
+**Large camera**
+
+```bash
+mkdir -p out
+gst-launch-1.0 qtiqmmfsrc name=camsrc camera=0 ! video/x-raw,width=1920,height=1080 ! jpegenc ! multifilesink location=out/frame%05d.jpg
+```
+
+**Small camera**
+
+```bash
+mkdir -p out
+gst-launch-1.0 qtiqmmfsrc name=camsrc camera=1 ! video/x-raw,width=1280,height=720 ! jpegenc ! multifilesink location=out/frame%05d.jpg
+```
+
+This writes frames to the `out/` directory.
