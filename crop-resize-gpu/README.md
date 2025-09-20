@@ -57,7 +57,7 @@ To test:
             **IM SDK**
 
             ```bash
-            python3 gstreamer.py --video-source "v4l2src device=/dev/video2" --use-imsdk
+            python3 imsdk.py --video-source "v4l2src device=/dev/video2"
             # [IMSDK] process: 9.19 ms
             # [IMSDK] process: 9.12 ms
             # [IMSDK] process: 8.38 ms
@@ -73,16 +73,22 @@ To test:
 
         ```bash
         python3 gstreamer.py --video-source "qtiqmmfsrc name=camsrc camera=0"
-        # [GStreamer] process: 19.69 ms
-        # [GStreamer] process: 19.35 ms
-        # [GStreamer] process: 20.28 ms
+        # Frame ready
+        #     Data: name=frame (224, 224, 3)
+        #     Timings: frame_ready_webcam→transform_done: 18.48ms, transform_done→pipeline_finished: 2.60ms (total 21.09ms)
+        # Frame ready
+        #     Data: name=frame (224, 224, 3)
+        #     Timings: frame_ready_webcam→transform_done: 18.56ms, transform_done→pipeline_finished: 3.39ms (total 21.95ms)
         ```
 
         **IM SDK**
 
         ```bash
-        python3 gstreamer.py --video-source "v4l2src device=/dev/video2" --use-imsdk
-        # [IMSDK] process: 3.79 ms
-        # [IMSDK] process: 3.71 ms
-        # [IMSDK] process: 5.37 ms
+        python3 imsdk.py --video-source "qtiqmmfsrc name=camsrc camera=0"
+        # Frame ready
+        #     Data: name=frame (224, 224, 3)
+        #     Timings: frame_ready→transform_done: 2.99ms, transform_done→pipeline_finished: 1.38ms (total 4.37ms)
+        # Frame ready
+        #     Data: name=frame (224, 224, 3)
+        #     Timings: frame_ready→transform_done: 2.05ms, transform_done→pipeline_finished: 2.04ms (total 4.09ms)
         ```
