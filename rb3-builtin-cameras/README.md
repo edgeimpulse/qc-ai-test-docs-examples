@@ -21,7 +21,7 @@ To get data from the built-in cameras into a Python script:
 3. Create a new venv, and install dependencies:
 
     ```bash
-    python3 -m venv .venv
+    python3.12 -m venv .venv
     source .venv/bin/activate
     pip3 install -r requirements.txt
     ```
