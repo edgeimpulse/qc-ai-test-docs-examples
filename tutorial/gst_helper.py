@@ -2,6 +2,7 @@ import time, collections, queue, numpy as np, gi, os
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
 from PIL import Image
+import urllib.request
 
 Gst.init(None)
 
@@ -75,9 +76,12 @@ def gst_grouped_frames(pipeline_str: str, timeout_s: float = 0.100):
         if not ok:
             return Gst.FlowReturn.OK
         try:
-            rowstride = mapinfo.size // h
-            arr = np.frombuffer(mapinfo.data, dtype=np.uint8, count=h * rowstride)
-            arr = arr.reshape(h, rowstride // 3, 3)[:, :w, :].copy()
+            if w is not None and h is not None:
+                rowstride = mapinfo.size // h
+                arr = np.frombuffer(mapinfo.data, dtype=np.uint8, count=h * rowstride)
+                arr = arr.reshape(h, rowstride // 3, 3)[:, :w, :].copy()
+            else:
+                arr = np.frombuffer(mapinfo.data, dtype=np.uint8).copy()
         finally:
             buf.unmap(mapinfo)
 
@@ -139,6 +143,12 @@ def atomic_save_image(frame, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     os.rename(tmp_file, path)
 
+def atomic_save_pillow_image(img, path):
+    tmp_file = "/tmp/" + os.path.basename(path)
+    img.save(tmp_file)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    os.rename(tmp_file, path)
+
 def timing_marks_to_str(marks):
     time_str = []
 
@@ -157,3 +167,18 @@ def timing_marks_to_str(marks):
         return ', '.join(time_str)
     else:
         return 'N/A'
+
+def download_file_if_needed(model_path, model_url):
+    if not os.path.exists(model_path):
+        print(f"Downloading {model_path}...")
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        model_url = model_url
+        urllib.request.urlretrieve(model_url, model_path)
+        print(f"Downloading {model_path} OK")
+    return model_path
+
+def softmax(x, axis=-1):
+    # subtract max for numerical stability
+    x_max = np.max(x, axis=axis, keepdims=True)
+    e_x = np.exp(x - x_max)
+    return e_x / np.sum(e_x, axis=axis, keepdims=True)
