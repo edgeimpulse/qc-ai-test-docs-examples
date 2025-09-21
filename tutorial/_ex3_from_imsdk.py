@@ -7,27 +7,24 @@ parser = argparse.ArgumentParser(description='GStreamer -> SqueezeNet')
 parser.add_argument('--video-source', type=str, required=True, help='GStreamer video source (e.g. "v4l2src device=/dev/video2" or "qtiqmmfsrc name=camsrc camera=0")')
 args, unknown = parser.parse_known_args()
 
-# MODEL_PATH = download_file_if_needed('models/squeezenet1_1-squeezenet-1.1-w8a8.tflite', 'https://cdn.edgeimpulse.com/qc-ai-docs/models/squeezenet1_1-squeezenet-1.1-w8a8.tflite')
-# LABELS_PATH = download_file_if_needed('models/SqueezeNet-1.1_labels.txt', 'https://cdn.edgeimpulse.com/qc-ai-docs/models/SqueezeNet-1.1_labels.txt')
+MODEL_PATH = download_file_if_needed('models/squeezenet1_1-squeezenet-1.1-w8a8.tflite', 'https://cdn.edgeimpulse.com/qc-ai-docs/models/squeezenet1_1-squeezenet-1.1-w8a8.tflite')
+LABELS_PATH = download_file_if_needed('models/SqueezeNet-1.1_labels.txt', 'https://cdn.edgeimpulse.com/qc-ai-docs/models/SqueezeNet-1.1_labels.txt')
 
-# # Parse labels
-# with open(LABELS_PATH, 'r') as f:
-#     labels = [line for line in f.read().splitlines() if line.strip()]
+# Parse labels
+with open(LABELS_PATH, 'r') as f:
+    labels = [line for line in f.read().splitlines() if line.strip()]
 
-# # IM SDK expects labels in this format
-# # (structure)"white-shark,id=(guint)0x3,color=(guint)0x00FF00FF;" (so no spaces in the name)
-# IMSDK_LABELS_PATH = 'models/SqueezeNet-1.1_imsdk_labels.txt'
-# with open(IMSDK_LABELS_PATH, 'w') as f:
-#     imsdk_labels_content = ['(structure)"background,id=(guint)0x0,color=(guint)0x00FF00FF;"']
-#     for i in range(0, len(labels)):
-#         label = labels[i]
-#         label = label.replace(' ', '-') # no space allowed
-#         label = label.replace("'", '') # no ' allowed
-#         imsdk_labels_content.append(f'(structure)"{label},id=(guint){hex(i+1)},color=(guint)0x00FF00FF;"')
-#     f.write('\n'.join(imsdk_labels_content))
-
-MODEL_PATH='/home/ubuntu/qc-ai-docs-examples-imsdk/tutorial/models/inception_v3-inception-v3-w8a8.tflite'
-IMSDK_LABELS_PATH='/home/ubuntu/qc-ai-docs-examples-imsdk/tutorial/models/classification.labels'
+# IM SDK expects labels in this format
+# (structure)"white-shark,id=(guint)0x3,color=(guint)0x00FF00FF;" (so no spaces in the name)
+IMSDK_LABELS_PATH = 'models/SqueezeNet-1.1_imsdk_labels.txt'
+with open(IMSDK_LABELS_PATH, 'w') as f:
+    imsdk_labels_content = ['(structure)"background,id=(guint)0x0,color=(guint)0x00FF00FF;"']
+    for i in range(0, len(labels)):
+        label = labels[i]
+        label = label.replace(' ', '-') # no space allowed
+        label = label.replace("'", '') # no ' allowed
+        imsdk_labels_content.append(f'(structure)"{label},id=(guint){hex(i+1)},color=(guint)0x00FF00FF;"')
+    f.write('\n'.join(imsdk_labels_content))
 
 # Load TFLite model and allocate tensors, note: this is a 224x224 model with uint8 input!
 # If your models are different, then you'll need to update the pipeline below.
