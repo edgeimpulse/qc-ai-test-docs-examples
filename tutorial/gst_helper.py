@@ -6,7 +6,7 @@ import urllib.request
 
 Gst.init(None)
 
-def gst_grouped_frames(pipeline_str: str, timeout_s: float = 0.100):
+def gst_grouped_frames(pipeline_str: str, element_properties = {}):
     """
     Yield (pts, frames_by_sink, marks) tuples from a GStreamer pipeline string.
 
@@ -15,6 +15,7 @@ def gst_grouped_frames(pipeline_str: str, timeout_s: float = 0.100):
     - Emits one tuple per buffer PTS, grouped across all appsinks.
     - If a sink is late, a timeout ensures progress (partial group).
     """
+    timeout_s = 0.100
 
     if (pipeline_str.strip().startswith('!')):
         raise Exception('First argument of pipeline is empty, did you not set the IMSDK_VIDEO_SOURCE env variable? E.g.:\n' +
@@ -70,6 +71,7 @@ def gst_grouped_frames(pipeline_str: str, timeout_s: float = 0.100):
         buf = sample.get_buffer()
         caps = sample.get_caps().get_structure(0)
         w, h = caps.get_value("width"), caps.get_value("height")
+        media = s.get_name()  # e.g. 'video/x-raw', 'text/x-raw', 'neural-network/tensors'
         pts = int(buf.pts) if buf.pts != Gst.CLOCK_TIME_NONE else -1
 
         ok, mapinfo = buf.map(Gst.MapFlags.READ)
@@ -128,6 +130,14 @@ def gst_grouped_frames(pipeline_str: str, timeout_s: float = 0.100):
                 return item
 
     GLib.timeout_add(int(timeout_s * 500), on_timeout, None)
+
+    for el_key in element_properties.keys():
+        el = pipeline.get_by_name(el_key)
+        for prop in element_properties[el_key].keys():
+            value = element_properties[el_key][prop]
+            el.set_property(prop, value)
+            if el.get_property(prop) is None:
+                raise Exception(f'Failed to set property "{prop}" on element "{el_key}" (value is None after setting)')
 
     pipeline.set_state(Gst.State.PLAYING)
     try:

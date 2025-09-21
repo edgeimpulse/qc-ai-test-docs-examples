@@ -18,12 +18,12 @@ with open(LABELS_PATH, 'r') as f:
 # (structure)"white-shark,id=(guint)0x3,color=(guint)0x00FF00FF;" (so no spaces in the name)
 IMSDK_LABELS_PATH = 'models/SqueezeNet-1.1_imsdk_labels.txt'
 with open(IMSDK_LABELS_PATH, 'w') as f:
-    imsdk_labels_content = ['(structure)"background,id=(guint)0x0,color=(guint)0x00FF00FF;"']
+    imsdk_labels_content = []
     for i in range(0, len(labels)):
         label = labels[i]
         label = label.replace(' ', '-') # no space allowed
         label = label.replace("'", '') # no ' allowed
-        imsdk_labels_content.append(f'(structure)"{label},id=(guint){hex(i+1)},color=(guint)0x00FF00FF;"')
+        imsdk_labels_content.append(f'(structure)"{label},id=(guint){hex(i)},color=(guint)0x00FF00FF;"')
     f.write('\n'.join(imsdk_labels_content))
 
 # Load TFLite model and allocate tensors, note: this is a 224x224 model with uint8 input!
@@ -51,6 +51,7 @@ PIPELINE = (
     "video/x-raw,width=224,height=224,format=NV12 ! "
     # Event when the crop/scale are done
     "identity name=transform_done silent=false ! "
+
     # turn into right format (UINT8 data type) and add batch dimension
     'qtimlvconverter ! neural-network/tensors,type=UINT8,dimensions=<<1,224,224,3>> ! '
     # Event when conversion is done
@@ -68,18 +69,34 @@ PIPELINE = (
         "queue max-size-buffers=2 leaky=downstream ! "
         "appsink name=qtimltflite_output drop=true sync=false max-buffers=1 emit-signals=true "
 
-    # Branch B) parse the output tensor in IM SDK, and then draw the top result onto the earlier image
+    # Branch B) parse the output tensor in IM SDK
         "t. ! queue max-size-buffers=1 leaky=downstream ! "
-        f'qtimlvclassification module=mobilenet extra-operation=softmax constants="mobilenet,q-offsets=<{zero_point}>,q-scales=<{scale};>" threshold=10 results=2 labels="{IMSDK_LABELS_PATH}" '
-        "queue max-size-buffers=2 leaky=downstream ! "
-        'appsink name=qtimlvclassification_output drop=true sync=false max-buffers=1 emit-signals=true '
+        # Run the classifier (add softmax, as AI Hub models miss it), this will return the top n labels (above threshold, min. threshold is 10)
+        # note that you also need to pass the quantization params (see below under the "gst_grouped_frames" call).
+        f'qtimlvclassification name=cls module=mobilenet extra-operation=softmax threshold=10 results=1 labels="{IMSDK_LABELS_PATH}" ! '
+        "identity name=classification_done silent=false ! "
+
+        # INFO: If you'd like to debug the output as text, you can add this (remove the code below this block):
+            # "text/x-raw,format=utf8 ! "
+            # "queue max-size-buffers=2 leaky=downstream ! "
+            # 'appsink name=qtimlvclassification_text drop=true sync=false max-buffers=1 emit-signals=true '
+        # and then use 'frames_by_sink['qtimlvclassification_text'].tobytes().decode("utf-8")' in your main loop to decode
+
+        # create an RGBA overlay
+        "video/x-raw,format=BGRA,width=224,height=224 ! "
+        "videoconvert ! jpegenc ! "
+        "identity name=overlay_jpegenc_done silent=false ! "
+        "filesink location=out/overlay.png"
 )
 
-for frames_by_sink, marks in gst_grouped_frames(PIPELINE):
+for frames_by_sink, marks in gst_grouped_frames(PIPELINE, element_properties={
+    # the qtimlvclassification element does not like these variables passed in as a string in the pipeline, so set them like this
+    'cls': { 'constants': f'Mobilenet,q-offsets=<{zero_point}>,q-scales=<{scale}>' }
+}):
     print(f"Frame ready")
     print('    Data:', end='')
     for key in list(frames_by_sink):
-        print(f' name={key} {frames_by_sink[key].shape}', end='')
+        print(f' name={key} {frames_by_sink[key].shape} ({frames_by_sink[key].dtype})', end='')
     print('')
 
     # Get prediction (these come in quantized, so dequantize first)
@@ -92,5 +109,10 @@ for frames_by_sink, marks in gst_grouped_frames(PIPELINE):
     print(f"    Top-5 predictions:")
     for i in top_k:
         print(f"        Class {labels[i]}: score={scores[i]}")
+
+    # Grab the qtimlvclassification_text (utf8 text) with predictions from IM SDK as well (see above on how to enable)
+    if 'qtimlvclassification_text' in frames_by_sink.keys():
+        qtimlvclassification_text = frames_by_sink['qtimlvclassification_text'].tobytes().decode("utf-8")
+        print('    qtimlvclassification_text:', qtimlvclassification_text)
 
     print('    Timings:', timing_marks_to_str(marks))
