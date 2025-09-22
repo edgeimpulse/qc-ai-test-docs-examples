@@ -23,23 +23,29 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
 
     pipeline = Gst.parse_launch(pipeline_str)
 
-    # discover identities and appsinks
-    identity_names = []
+    # discover identities and appsinks (recursively)
+    identity_elems = []
     appsinks = []
-    it = pipeline.iterate_elements()
-    while True:
-        ok, item = it.next()
-        if ok != Gst.IteratorResult.OK:
-            break
-        elem = item
-        f = elem.get_factory()
-        if f:
-            if f.get_name() == "identity":
-                identity_names.append(elem.get_name())
-            elif f.get_name() == "appsink":
-                appsinks.append(elem)
+
+    def walk(bin_or_elem):
+        if isinstance(bin_or_elem, Gst.Bin):
+            it = bin_or_elem.iterate_elements()
+            while True:
+                ok, item = it.next()
+                if ok != Gst.IteratorResult.OK:
+                    break
+                walk(item)
+        else:
+            f = bin_or_elem.get_factory()
+            if f and f.get_name() == "appsink":
+                appsinks.append(bin_or_elem)
+            # any element with a 'signal-handoffs' property behaves like identity for handoffs
+            if bin_or_elem.find_property("signal-handoffs") is not None:
+                identity_elems.append(bin_or_elem)
+    walk(pipeline)
 
     expected_sinks = {s.get_name() for s in appsinks}
+    identity_names = [e.get_name() for e in identity_elems]
 
     # shared state
     ledger = collections.OrderedDict()
@@ -60,8 +66,10 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
         entry = ensure_entry(pts)
         entry["marks"][name] = time.perf_counter()
 
-    for nm in identity_names:
-        elem = pipeline.get_by_name(nm)
+    for elem in identity_elems:
+        # identity must not be 'silent' and must emit handoffs
+        if elem.find_property("silent") is not None:
+            elem.set_property("silent", False)
         elem.set_property("signal-handoffs", True)
         elem.connect("handoff", on_identity_handoff)
 
@@ -71,17 +79,37 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
         buf = sample.get_buffer()
         caps = sample.get_caps().get_structure(0)
         w, h = caps.get_value("width"), caps.get_value("height")
-        media = s.get_name()  # e.g. 'video/x-raw', 'text/x-raw', 'neural-network/tensors'
+        fmt = caps.get_value("format")  # e.g. "RGB", "BGR", "RGBA", "BGRA", "GRAY8"
         pts = int(buf.pts) if buf.pts != Gst.CLOCK_TIME_NONE else -1
 
         ok, mapinfo = buf.map(Gst.MapFlags.READ)
         if not ok:
             return Gst.FlowReturn.OK
         try:
-            if w is not None and h is not None:
+            if (w is not None and h is not None):
+                if fmt in ("RGB", "BGR"):
+                    C = 3
+                elif fmt in ("RGBA", "BGRA", "ARGB", "ABGR"):
+                    C = 4
+                elif fmt in ("GRAY8",):
+                    C = 1
+                else:
+                    raise RuntimeError(f"Unsupported format: {fmt}")
+
                 rowstride = mapinfo.size // h
                 arr = np.frombuffer(mapinfo.data, dtype=np.uint8, count=h * rowstride)
-                arr = arr.reshape(h, rowstride // 3, 3)[:, :w, :].copy()
+                arr = arr.reshape(h, rowstride // C, C)[:, :w, :].copy()
+
+                # Fix channel ordering to RGB / RGBA
+                if fmt == "BGR":
+                    arr = arr[:, :, ::-1]  # BGR → RGB
+                elif fmt == "BGRA":
+                    arr = arr[:, :, [2, 1, 0, 3]]  # BGRA → RGBA
+                elif fmt == "ARGB":  # ARGB → RGBA
+                    arr = arr[:, :, [1, 2, 3, 0]]
+                elif fmt == "ABGR":  # ABGR → RGBA
+                    arr = arr[:, :, [3, 2, 1, 0]]
+                # (RGB and RGBA are already fine)
             else:
                 arr = np.frombuffer(mapinfo.data, dtype=np.uint8).copy()
         finally:
