@@ -7,7 +7,11 @@ parser = argparse.ArgumentParser(description='GStreamer -> SqueezeNet')
 parser.add_argument('--video-source', type=str, required=True, help='GStreamer video source (e.g. "v4l2src device=/dev/video2" or "qtiqmmfsrc name=camsrc camera=0")')
 args, unknown = parser.parse_known_args()
 
-# https://commons.wikimedia.org/wiki/File:Arrow_png_image.png
+if args.video_source.strip() == '':
+    raise Exception('--video-source is empty, did you not set the IMSDK_VIDEO_SOURCE env variable? E.g.:\n' +
+    '    export IMSDK_VIDEO_SOURCE="v4l2src device=/dev/video2"')
+
+# Source: https://commons.wikimedia.org/wiki/File:Arrow_png_image.png
 OVERLAY_IMAGE = download_file_if_needed('images/imsdk-transparent-static.png', 'https://cdn.edgeimpulse.com/qc-ai-docs/example-images/imsdk-transparent-static.png')
 OVERLAY_WIDTH = 128
 OVERLAY_HEIGHT = 96

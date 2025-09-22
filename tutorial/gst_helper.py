@@ -1,10 +1,24 @@
-import time, collections, queue, numpy as np, gi, os
+import time, collections, queue, numpy as np, gi, os, threading
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
 from PIL import Image
 import urllib.request
 
 Gst.init(None)
+
+def _bucket(ns_value: int, period_ns: int) -> int:
+    return int((ns_value + period_ns // 2) // period_ns) * period_ns
+
+def _frame_period_ns_from_pad(pad) -> int:
+    caps = pad.get_current_caps()
+    if not caps or caps.get_size() == 0:
+        return 33333333  # ~30fps
+    s = caps.get_structure(0)
+    if s and s.has_field("framerate"):
+        ok, num, den = s.get_fraction("framerate")
+        if num > 0 and den > 0:
+            return int(1_000_000_000 * den / num)
+    return 33333333
 
 def gst_grouped_frames(pipeline_str: str, element_properties = {}):
     """
@@ -47,6 +61,28 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
     expected_sinks = {s.get_name() for s in appsinks}
     identity_names = [e.get_name() for e in identity_elems]
 
+    # ---- Track segment per PAD
+    seg_by_pad = {}          # pad -> Gst.Segment
+    seg_lock = threading.Lock()
+
+    def set_segment_for_pad(pad, event):
+        seg = event.parse_segment()
+        with seg_lock:
+            seg_by_pad[pad] = seg
+
+    def to_running_time_ns(pad, pts):
+        if pts == Gst.CLOCK_TIME_NONE:
+            return None
+        with seg_lock:
+            seg = seg_by_pad.get(pad)
+        if not seg:
+            return None
+        rt = seg.to_stream_time(Gst.Format.TIME, pts)
+        # GI returns a Python int (nanoseconds) or Gst.CLOCK_TIME_NONE (-1) if invalid
+        if rt == Gst.CLOCK_TIME_NONE or rt < 0:
+            return None
+        return int(rt)
+
     # shared state
     ledger = collections.OrderedDict()
     LEDGER_MAX = 256
@@ -62,28 +98,41 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
 
     # identity: record timestamp
     def on_identity_handoff(element, buf):
-        nonlocal frame_index
+        # nonlocal frame_index
         name = element.get_name()
         pts = int(buf.pts) if buf.pts != Gst.CLOCK_TIME_NONE else -1
-        entry = ensure_entry(frame_index)
+
+        pad = element.get_static_pad("src")
+        rt_ns = to_running_time_ns(pad, buf.pts)
+        if rt_ns is None:
+            key = buf.pts
+        else:
+            key = _bucket(rt_ns, frame_period_ns)
+
+        entry = ensure_entry(key)
         entry["marks"][name] = time.perf_counter()
 
     for elem in identity_elems:
-        # identity must not be 'silent' and must emit handoffs
-        if elem.find_property("silent") is not None:
-            elem.set_property("silent", False)
         elem.set_property("signal-handoffs", True)
         elem.connect("handoff", on_identity_handoff)
 
     # appsink: grab frame, store, maybe emit group
     def on_new_sample(sink):
-        nonlocal frame_index
+        # nonlocal frame_index
         sample = sink.emit("pull-sample")
         buf = sample.get_buffer()
         caps = sample.get_caps().get_structure(0)
         w, h = caps.get_value("width"), caps.get_value("height")
         fmt = caps.get_value("format")  # e.g. "RGB", "BGR", "RGBA", "BGRA", "GRAY8"
         pts = int(buf.pts) if buf.pts != Gst.CLOCK_TIME_NONE else -1
+
+        name = sink.get_name()
+        pad = sink.get_static_pad("sink")
+        rt_ns = to_running_time_ns(pad, buf.pts)
+        if rt_ns is None:
+            key = buf.pts
+        else:
+            key = _bucket(rt_ns, frame_period_ns)
 
         ok, mapinfo = buf.map(Gst.MapFlags.READ)
         if not ok:
@@ -118,13 +167,13 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
         finally:
             buf.unmap(mapinfo)
 
-        entry = ensure_entry(frame_index)
-        entry["frames"][sink.get_name()] = arr
+        entry = ensure_entry(key)
+        entry["frames"][name] = arr
 
         if expected_sinks.issubset(entry["frames"].keys()):
             entry['marks']['pipeline_finished'] = time.perf_counter()
             payload = (pts, entry["frames"], entry["marks"])
-            frame_index = frame_index + 1
+            # frame_index = frame_index + 1
             ledger.pop(pts, None)
             try:
                 outq.put_nowait(payload)
@@ -172,7 +221,68 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
             if el.get_property(prop) is None:
                 raise Exception(f'Failed to set property "{prop}" on element "{el_key}" (value is None after setting)')
 
+    # ---- Probes
+    # For each identity: attach a probe on its SRC pad to get SEGMENT + BUFFERS
+    def attach_identity_probe(identity):
+        pad = identity.get_static_pad("src")
+        name = identity.get_name()
+
+        def cb(pad, info, _user):
+            typ = info.type
+            # Track segment events
+            if typ & Gst.PadProbeType.EVENT_DOWNSTREAM:
+                ev = info.get_event()
+                if ev.type == Gst.EventType.SEGMENT:
+                    set_segment_for_pad(pad, ev)
+                return Gst.PadProbeReturn.OK
+
+            return Gst.PadProbeReturn.OK
+
+        pad.add_probe(
+            Gst.PadProbeType.EVENT_DOWNSTREAM | Gst.PadProbeType.BUFFER,
+            cb, None
+        )
+
+    # For each appsink: attach probe on its SINK pad to see buffers before the sink consumes them
+    def attach_appsink_probe(appsink):
+        sink_pad = appsink.get_static_pad("sink")
+        name = appsink.get_name()
+
+        def cb(pad, info, _user):
+            typ = info.type
+            if typ & Gst.PadProbeType.EVENT_DOWNSTREAM:
+                ev = info.get_event()
+                if ev.type == Gst.EventType.SEGMENT:
+                    set_segment_for_pad(pad, ev)
+                return Gst.PadProbeReturn.OK
+
+            return Gst.PadProbeReturn.OK
+
+        sink_pad.add_probe(
+            Gst.PadProbeType.EVENT_DOWNSTREAM | Gst.PadProbeType.BUFFER,
+            cb, None
+        )
+
+    # Attach probes
+    for iden in identity_elems:
+        attach_identity_probe(iden)
+    for sink in appsinks:
+        attach_appsink_probe(sink)
+
     pipeline.set_state(Gst.State.PLAYING)
+
+    all_frame_periods = []
+    frame_period_ns = -1
+
+    for appsink in appsinks:
+        appsink_sink_pad = appsink.get_static_pad("sink")
+        frame_period_ns = _frame_period_ns_from_pad(appsink_sink_pad)
+        all_frame_periods.append(frame_period_ns)
+
+    if not len(set(all_frame_periods)) <= 1:
+        raise Exception('appsinks have different values for _frame_period_ns_from_pad... cannot handle this: values=[' +
+            ','.join(str(x) for x in all_frame_periods) + ']')
+
     try:
         while True:
             pts, frames_by_sink, marks = get_latest(outq)
