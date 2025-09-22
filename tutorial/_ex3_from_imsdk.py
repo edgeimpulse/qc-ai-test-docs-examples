@@ -49,7 +49,9 @@ PIPELINE = (
     "videoconvert ! "
     "video/x-raw,format=RGBA,width=224,height=224 ! "
     # Convert to PNG
+    "identity name=begin_pngenc silent=false ! "
     "pngenc ! "
+    "identity name=end_pngenc silent=false ! "
     # Write frames to appsink
     "appsink name=image_with_overlay drop=true sync=false max-buffers=1 emit-signals=true "
 
