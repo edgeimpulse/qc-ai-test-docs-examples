@@ -25,25 +25,23 @@ PIPELINE = (
     # Part 2: Grab image from webcam and write the composer
         # Video source
         f"{args.video_source} ! "
-        "identity name=seg_cam single-segment=true silent=false ! "
         # Properties for the video source
         "video/x-raw,width=1920,height=1080 ! "
         # An identity element so we can track when a new frame is ready (so we can calc. processing time)
-        "identity name=frame_ready_webcam silent=false single-segment=true ! "
+        "identity name=frame_ready_webcam silent=false ! "
         # Crop (square), the crop syntax is ('<X, Y, WIDTH, HEIGHT >').
         # So here we use 1920x1080 input, then center crop to 1080x1080 ((1920-1080)/2 = 420 = x crop)
         f'qtivtransform crop="<420, 0, 1080, 1080>" ! '
         # then resize to 224x224
         "video/x-raw,width=224,height=224,format=NV12 ! "
         # Event when the crop/scale are done
-        "identity name=transform_done silent=false single-segment=true ! "
+        "identity name=transform_done silent=false ! "
         # Write to sink 0 on the composer
         "comp.sink_0 "
 
     # Part 3: Load overlay from disk and write to composer (sink 1)
         # Image (statically from disk)
         f'filesrc location="{OVERLAY_IMAGE}" ! '
-        "identity name=seg_overlay single-segment=true silent=false ! "
         # Decode PNG
         "pngdec ! "
         # Turn into a video (scaled to 128x96, RGBA format so we keep transparency, requires a framerate)

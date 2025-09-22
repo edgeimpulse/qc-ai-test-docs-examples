@@ -51,6 +51,7 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
     ledger = collections.OrderedDict()
     LEDGER_MAX = 256
     outq = queue.Queue(maxsize=4)
+    frame_index = 0
 
     def ensure_entry(pts):
         if pts not in ledger:
@@ -61,9 +62,9 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
 
     # identity: record timestamp
     def on_identity_handoff(element, buffer):
+        nonlocal frame_index
         name = element.get_name()
-        pts = int(buffer.pts) if buffer.pts != Gst.CLOCK_TIME_NONE else -1
-        entry = ensure_entry(pts)
+        entry = ensure_entry(frame_index)
         entry["marks"][name] = time.perf_counter()
 
     for elem in identity_elems:
@@ -75,6 +76,7 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
 
     # appsink: grab frame, store, maybe emit group
     def on_new_sample(sink):
+        nonlocal frame_index
         sample = sink.emit("pull-sample")
         buf = sample.get_buffer()
         caps = sample.get_caps().get_structure(0)
@@ -86,7 +88,7 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
         if not ok:
             return Gst.FlowReturn.OK
         try:
-            if (w is not None and h is not None):
+            if (w is not None and h is not None and fmt is not None):
                 if fmt in ("RGB", "BGR"):
                     C = 3
                 elif fmt in ("RGBA", "BGRA", "ARGB", "ABGR"):
@@ -115,12 +117,13 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
         finally:
             buf.unmap(mapinfo)
 
-        entry = ensure_entry(pts)
+        entry = ensure_entry(frame_index)
         entry["frames"][sink.get_name()] = arr
 
         if expected_sinks.issubset(entry["frames"].keys()):
             entry['marks']['pipeline_finished'] = time.perf_counter()
             payload = (pts, entry["frames"], entry["marks"])
+            frame_index = frame_index + 1
             ledger.pop(pts, None)
             try:
                 outq.put_nowait(payload)
@@ -159,6 +162,7 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
 
     GLib.timeout_add(int(timeout_s * 500), on_timeout, None)
 
+    # Override properties (from element_properties)
     for el_key in element_properties.keys():
         el = pipeline.get_by_name(el_key)
         for prop in element_properties[el_key].keys():
@@ -184,6 +188,12 @@ def atomic_save_image(frame, path):
 def atomic_save_pillow_image(img, path):
     tmp_file = "/tmp/" + os.path.basename(path)
     img.save(tmp_file)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    os.rename(tmp_file, path)
+
+def atomic_save_numpy_buffer(buf, path):
+    tmp_file = "/tmp/" + os.path.basename(path)
+    buf.tofile(tmp_file)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     os.rename(tmp_file, path)
 

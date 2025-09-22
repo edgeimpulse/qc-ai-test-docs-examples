@@ -1,4 +1,4 @@
-from gst_helper import gst_grouped_frames, atomic_save_pillow_image, timing_marks_to_str, download_file_if_needed, softmax
+from gst_helper import gst_grouped_frames, atomic_save_numpy_buffer, timing_marks_to_str, download_file_if_needed, softmax
 import time, argparse, numpy as np
 from ai_edge_litert.interpreter import Interpreter, load_delegate
 from PIL import ImageDraw, Image
@@ -38,6 +38,19 @@ output_details = interpreter.get_output_details()
 scale, zero_point = output_details[0]['quantization']
 
 PIPELINE = (
+    # Part 1: Create a qtivcomposer with two sinks (we'll write webcam to sink 0, overlay to sink 1)
+    "qtivcomposer name=comp sink_0::zorder=0 "
+        # Sink 1 (the overlay). We don't need to pass in a position/size as the overlay will already be the right size.
+        f"sink_1::zorder=1 sink_1::alpha=1.0 ! "
+    "videoconvert ! "
+    "video/x-raw,format=RGBA,width=224,height=224 ! "
+    "identity name=pngenc_begin silent=false ! "
+    # Convert to PNG
+    "pngenc ! "
+    "identity name=pngenc_done silent=false ! "
+    # Write frames to appsink
+    "appsink name=image_with_overlay drop=true sync=false max-buffers=1 emit-signals=true "
+
     # Video source
     f"{args.video_source} ! "
     # Properties for the video source
@@ -52,41 +65,41 @@ PIPELINE = (
     # Event when the crop/scale are done
     "identity name=transform_done silent=false ! "
 
-    # turn into right format (UINT8 data type) and add batch dimension
-    'qtimlvconverter ! neural-network/tensors,type=UINT8,dimensions=<<1,224,224,3>> ! '
-    # Event when conversion is done
-    "identity name=conversion_done silent=false ! "
-    # run inference (using the QNN delegates to run on NPU)
-    f'qtimltflite delegate=external external-delegate-path=libQnnTFLiteDelegate.so external-delegate-options="QNNExternalDelegate,backend_type=htp;" model="{MODEL_PATH}" ! '
-    # Event when inference is done
-    "identity name=inference_done silent=false ! "
+    # Tee the stream
+    "tee name=v "
 
-    # Split the stream
-    "tee name=t "
+    # Branch A) send the image to the composer (sink 0)
+        "v. ! queue max-size-buffers=1 leaky=downstream ! "
+        "comp.sink_0 "
 
-    # Branch A) send raw results to the appsink (note that these are still quantized!)
-        "t. ! queue max-size-buffers=1 leaky=downstream ! "
-        "queue max-size-buffers=2 leaky=downstream ! "
-        "appsink name=qtimltflite_output drop=true sync=false max-buffers=1 emit-signals=true "
+    # Branch B) run inference over the image
+        "v. ! queue max-size-buffers=1 leaky=downstream ! "
+        # turn into right format (UINT8 data type) and add batch dimension
+        'qtimlvconverter ! neural-network/tensors,type=UINT8,dimensions=<<1,224,224,3>> ! '
+        # run inference (using the QNN delegates to run on NPU)
+        f'qtimltflite delegate=external external-delegate-path=libQnnTFLiteDelegate.so external-delegate-options="QNNExternalDelegate,backend_type=htp;" model="{MODEL_PATH}" ! '
 
-    # Branch B) parse the output tensor in IM SDK
-        "t. ! queue max-size-buffers=1 leaky=downstream ! "
-        # Run the classifier (add softmax, as AI Hub models miss it), this will return the top n labels (above threshold, min. threshold is 10)
-        # note that you also need to pass the quantization params (see below under the "gst_grouped_frames" call).
-        f'qtimlvclassification name=cls module=mobilenet extra-operation=softmax threshold=10 results=1 labels="{IMSDK_LABELS_PATH}" ! '
-        "identity name=classification_done silent=false ! "
+        # Split the stream
+        "tee name=t "
 
-        # INFO: If you'd like to debug the output as text, you can add this (remove the code below this block):
-            # "text/x-raw,format=utf8 ! "
-            # "queue max-size-buffers=2 leaky=downstream ! "
-            # 'appsink name=qtimlvclassification_text drop=true sync=false max-buffers=1 emit-signals=true '
-        # and then use 'frames_by_sink['qtimlvclassification_text'].tobytes().decode("utf-8")' in your main loop to decode
+        # Branch B1) send raw results to the appsink (note that these are still quantized!)
+            "t. ! queue max-size-buffers=1 leaky=downstream ! "
+            "queue max-size-buffers=2 leaky=downstream ! "
+            "appsink name=qtimltflite_output drop=true sync=false max-buffers=1 emit-signals=true "
 
-        # create an RGBA overlay
-        "video/x-raw,format=BGRA,width=224,height=224 ! "
-        "videoconvert ! jpegenc ! "
-        "identity name=overlay_jpegenc_done silent=false ! "
-        "filesink location=out/overlay.png"
+        # Branch B2) parse the output tensor in IM SDK
+            "t. ! queue max-size-buffers=1 leaky=downstream ! "
+            # Run the classifier (add softmax, as AI Hub models miss it), this will return the top n labels (above threshold, min. threshold is 10)
+            # note that you also need to pass the quantization params (see below under the "gst_grouped_frames" call).
+            f'qtimlvclassification name=cls module=mobilenet extra-operation=softmax threshold=10 results=1 labels="{IMSDK_LABELS_PATH}" ! '
+            # Event when inference is done
+            "identity name=inference_done silent=false ! "
+
+            # create an RGBA overlay
+            "video/x-raw,format=BGRA,width=224,height=224 ! "
+
+            # And send to the composer
+            "comp.sink_1 "
 )
 
 for frames_by_sink, marks in gst_grouped_frames(PIPELINE, element_properties={
@@ -110,9 +123,13 @@ for frames_by_sink, marks in gst_grouped_frames(PIPELINE, element_properties={
     for i in top_k:
         print(f"        Class {labels[i]}: score={scores[i]}")
 
-    # Grab the qtimlvclassification_text (utf8 text) with predictions from IM SDK as well (see above on how to enable)
-    if 'qtimlvclassification_text' in frames_by_sink.keys():
-        qtimlvclassification_text = frames_by_sink['qtimlvclassification_text'].tobytes().decode("utf-8")
-        print('    qtimlvclassification_text:', qtimlvclassification_text)
+    # Save image to disk
+    save_image_start = time.perf_counter()
+    png_file = frames_by_sink['image_with_overlay']
+    atomic_save_numpy_buffer(png_file, path='out/webcam_with_overlay_imsdk.png')
+    save_image_end = time.perf_counter()
+
+    # Add an extra mark, so we have timing info for the complete pipeline
+    marks['save_image_end'] = list(marks.items())[-1][1] + (save_image_end - save_image_start)
 
     print('    Timings:', timing_marks_to_str(marks))
