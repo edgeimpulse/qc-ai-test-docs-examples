@@ -44,10 +44,8 @@ PIPELINE = (
         f"sink_1::zorder=1 sink_1::alpha=1.0 ! "
     "videoconvert ! "
     "video/x-raw,format=RGBA,width=224,height=224 ! "
-    "identity name=pngenc_begin silent=false ! "
     # Convert to PNG
     "pngenc ! "
-    "identity name=pngenc_done silent=false ! "
     # Write frames to appsink
     "appsink name=image_with_overlay drop=true sync=false max-buffers=1 emit-signals=true "
 

@@ -19,6 +19,7 @@ PIPELINE = (
         f"sink_1::zorder=1 sink_1::alpha=1.0 sink_1::position=<10,10> sink_1::dimensions=<{OVERLAY_WIDTH},{OVERLAY_HEIGHT}> ! "
     "videoconvert ! "
     "video/x-raw,format=RGBA,width=224,height=224 ! "
+    "identity name=composer_done silent=false ! "
     # Write frames to appsink
     "appsink name=overlay_raw drop=true sync=false max-buffers=1 emit-signals=true "
 

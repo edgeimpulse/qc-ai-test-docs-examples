@@ -61,9 +61,10 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
         return ledger[pts]
 
     # identity: record timestamp
-    def on_identity_handoff(element, buffer):
+    def on_identity_handoff(element, buf):
         nonlocal frame_index
         name = element.get_name()
+        pts = int(buf.pts) if buf.pts != Gst.CLOCK_TIME_NONE else -1
         entry = ensure_entry(frame_index)
         entry["marks"][name] = time.perf_counter()
 
