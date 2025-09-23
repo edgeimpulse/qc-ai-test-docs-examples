@@ -57,5 +57,7 @@ On RB3 Gen 2 Vision Kit on builtin camera 0:
 Frame ready
     Data: name=frame (480, 640, 3)
     Faces: [[453, 33, 107, 149, 0.8500270247459412], [453, 35, 106, 147, 0.8500270247459412]]
-    Timings: frame_ready_webcam→transform_done: 1.74ms, transform_done→pipeline_finished: 1.41ms, pipeline_finished→inference_done: 5.47ms (total 8.63ms)
+    Timings: frame_ready_webcam→transform_done: 1.81ms, transform_done→pipeline_finished: 1.17ms, pipeline_finished→inference_done: 4.14ms, inference_done→postprocessing_done: 1.22ms (total 8.33ms)
 ```
+
+## Running on CPU

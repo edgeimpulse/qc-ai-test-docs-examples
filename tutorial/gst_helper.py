@@ -3,6 +3,7 @@ gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
 from PIL import Image
 import urllib.request
+from contextlib import contextmanager
 
 Gst.init(None)
 
@@ -341,3 +342,14 @@ def softmax(x, axis=-1):
     x_max = np.max(x, axis=axis, keepdims=True)
     e_x = np.exp(x - x_max)
     return e_x / np.sum(e_x, axis=axis, keepdims=True)
+
+@contextmanager
+def mark_performance(name, marks):
+    start = time.perf_counter()
+
+    try:
+        yield  # run the block inside `with`
+    finally:
+        end = time.perf_counter()
+        # Add an extra mark, so we have timing info for the complete pipeline
+        marks[name] = list(marks.items())[-1][1] + (end - start)

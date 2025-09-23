@@ -1,4 +1,4 @@
-from gst_helper import gst_grouped_frames, atomic_save_pillow_image, timing_marks_to_str, download_file_if_needed, softmax
+from gst_helper import gst_grouped_frames, atomic_save_pillow_image, timing_marks_to_str, download_file_if_needed, mark_performance
 import time, argparse, numpy as np
 from ai_edge_litert.interpreter import Interpreter, load_delegate
 from PIL import ImageDraw, Image
@@ -53,24 +53,17 @@ for frames_by_sink, marks in gst_grouped_frames(PIPELINE):
         print(f' name={key} {frames_by_sink[key].shape}', end='')
     print('')
 
-    # Begin inference timer
-    inference_start = time.perf_counter()
+    with mark_performance('inference_done', marks):
+        # Set tensor with the image received in "frames_by_sink['frame']", add batch dim, and run inference
+        frame = frames_by_sink['frame']
+        # Facedet lite uses blue channel only
+        interpreter.set_tensor(input_details[0]['index'], rgb_numpy_arr_to_input_tensor(interpreter, arr=frame, single_channel_behavior='blue'))
+        interpreter.invoke()
 
-    # Set tensor with the image received in "frames_by_sink['frame']", add batch dim, and run inference
-    frame = frames_by_sink['frame']
-    # Facedet lite uses blue channel only
-    interpreter.set_tensor(input_details[0]['index'], rgb_numpy_arr_to_input_tensor(interpreter, arr=frame, single_channel_behavior='blue'))
-    interpreter.invoke()
-
-    # Get prediction (dequantized)
-    faces = face_det_lite_postprocessing(interpreter)
-    print('    Faces:', faces)
-
-    # End inference timer
-    inference_end = time.perf_counter()
-
-    # Add an extra mark, so we have timing info for the complete pipeline
-    marks['inference_done'] = list(marks.items())[-1][1] + (inference_end - inference_start)
+    with mark_performance('postprocessing_done', marks):
+        # Get prediction (dequantized)
+        faces = face_det_lite_postprocessing(interpreter)
+        print('    Faces:', faces)
 
     # Composite image using Pillow
     # TODO: Do this on the original, unresized/cropped image
