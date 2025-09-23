@@ -24,6 +24,8 @@ input_w = input_details[0]['shape'][2]
 
 # TODO: Figure out webcam resolution automatically
 # TODO: Figure out crop automatically
+# TODO: Also get original resolution out (so we can overlay on original resolution); see ex. here https://qc-ai-test.gitbook.io/qc-ai-test-docs/running-building-ai-models/im-sdk#ex-2-teeing-streams-and-multiple-outputs
+# TODO: Allow specifying crop mode (squash / fit-short / fit-long) - now hardcoded to fit-short
 
 PIPELINE = (
     # Video source
@@ -71,6 +73,7 @@ for frames_by_sink, marks in gst_grouped_frames(PIPELINE):
     marks['inference_done'] = list(marks.items())[-1][1] + (inference_end - inference_start)
 
     # Composite image using Pillow
+    # TODO: Do this on the original, unresized/cropped image
     if frame.shape[2] == 1:
         frame = np.squeeze(frame, axis=-1) # strip off the last dim if grayscale
     img_out = Image.fromarray(frame).convert("RGB")
