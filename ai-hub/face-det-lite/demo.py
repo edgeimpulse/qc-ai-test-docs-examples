@@ -44,8 +44,6 @@ PIPELINE = (
     "appsink name=frame drop=true sync=false max-buffers=1 emit-signals=true "
 )
 
-IMAGE_OUT = 'demo.png'
-
 for frames_by_sink, marks in gst_grouped_frames(PIPELINE):
     print(f"Frame ready")
     print('    Data:', end='')
