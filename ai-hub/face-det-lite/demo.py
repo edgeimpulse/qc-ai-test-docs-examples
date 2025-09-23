@@ -27,6 +27,7 @@ input_w = input_details[0]['shape'][2]
 # TODO: Also get original resolution out (so we can overlay on original resolution); see ex. here https://qc-ai-test.gitbook.io/qc-ai-test-docs/running-building-ai-models/im-sdk#ex-2-teeing-streams-and-multiple-outputs
 # TODO: Allow specifying crop mode (squash / fit-short / fit-long) - now hardcoded to fit-short
 
+# TODO: Abstract this away
 PIPELINE = (
     # Video source
     f"{args.video_source} ! "
