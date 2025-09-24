@@ -152,17 +152,6 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
                 rowstride = mapinfo.size // h
                 arr = np.frombuffer(mapinfo.data, dtype=np.uint8, count=h * rowstride)
                 arr = arr.reshape(h, rowstride // C, C)[:, :w, :].copy()
-
-                # Fix channel ordering to RGB / RGBA
-                if fmt == "BGR":
-                    arr = arr[:, :, ::-1]  # BGR → RGB
-                elif fmt == "BGRA":
-                    arr = arr[:, :, [2, 1, 0, 3]]  # BGRA → RGBA
-                elif fmt == "ARGB":  # ARGB → RGBA
-                    arr = arr[:, :, [1, 2, 3, 0]]
-                elif fmt == "ABGR":  # ABGR → RGBA
-                    arr = arr[:, :, [3, 2, 1, 0]]
-                # (RGB and RGBA are already fine)
             else:
                 arr = np.frombuffer(mapinfo.data, dtype=np.uint8).copy()
         finally:
