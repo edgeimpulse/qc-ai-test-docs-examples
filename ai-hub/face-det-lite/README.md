@@ -19,7 +19,7 @@ Demo of AI Hub's [Lightweight-Face-Detection](https://aihub.qualcomm.com/models/
 
     ```bash
     # | grep -v "<W>" is optional (just filters out logs)
-    python3 demo.py --video-source "qtiqmmfsrc name=camsrc camera=0" | grep -v "<W>"
+    python3 -u demo.py --video-source "qtiqmmfsrc name=camsrc camera=0" | grep -v "<W>"
     ```
 
     **USB Webcam:**
@@ -42,7 +42,7 @@ Demo of AI Hub's [Lightweight-Face-Detection](https://aihub.qualcomm.com/models/
 
     # Run demo:
     # | grep -v "<W>" is optional (just filters out logs)
-    python3 demo.py --video-source "v4l2src device=/dev/video2" | grep -v "<W>"
+    python3 -u demo.py --video-source "v4l2src device=/dev/video2" | grep -v "<W>"
     ```
 
 4. Images from the camera are stored in the `out/` directory.
@@ -59,5 +59,3 @@ Frame ready
     Faces: [[453, 33, 107, 149, 0.8500270247459412], [453, 35, 106, 147, 0.8500270247459412]]
     Timings: frame_ready_webcam→transform_done: 1.81ms, transform_done→pipeline_finished: 1.17ms, pipeline_finished→inference_done: 4.14ms, inference_done→postprocessing_done: 1.22ms (total 8.33ms)
 ```
-
-## Running on CPU

@@ -2,11 +2,14 @@ from gst_helper import gst_grouped_frames, atomic_save_pillow_image, timing_mark
 import time, argparse, numpy as np
 from ai_edge_litert.interpreter import Interpreter, load_delegate
 from PIL import ImageDraw, Image
-from preprocessing import rgb_numpy_arr_to_input_tensor
+from preprocessing import rgb_numpy_arr_to_input_tensor, centered_aspect_crop_rect, get_gstreamer_pipeline
 from postprocessing import face_det_lite_postprocessing
 
 parser = argparse.ArgumentParser(description='Face Detection demo on GPU/NPU')
 parser.add_argument('--video-source', type=str, required=True, help='GStreamer video source (e.g. "v4l2src device=/dev/video2" or "qtiqmmfsrc name=camsrc camera=0")')
+parser.add_argument('--video-input-width', type=int, required=False, default=1920, help='Video width (input), default 1920')
+parser.add_argument('--video-input-height', type=int, required=False, default=1080, help='Video height (input), default 1080')
+parser.add_argument('--resize-mode', type=str, required=False, default='fit-short', help='Crop method (either "squash" or "fit-short")')
 args, unknown = parser.parse_known_args()
 
 # Load TFLite model and allocate tensors, note: this is a 224x224 model with uint8 input!
@@ -17,37 +20,15 @@ interpreter = Interpreter(
 )
 interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-
-input_h = input_details[0]['shape'][1]
-input_w = input_details[0]['shape'][2]
 
 # TODO: Figure out webcam resolution automatically
-# TODO: Figure out crop automatically
 # TODO: Also get original resolution out (so we can overlay on original resolution); see ex. here https://qc-ai-test.gitbook.io/qc-ai-test-docs/running-building-ai-models/im-sdk#ex-2-teeing-streams-and-multiple-outputs
-# TODO: Allow specifying crop mode (squash / fit-short / fit-long) - now hardcoded to fit-short
+# TODO: Allow adding crop mode "fit-long"
 
-# TODO: Abstract this away
-PIPELINE = (
-    # Video source
-    f"{args.video_source} ! "
-    # Properties for the video source
-    "video/x-raw,width=1920,height=1080 ! "
-    # An identity element so we can track when a new frame is ready (so we can calc. processing time)
-    "identity name=frame_ready_webcam silent=false ! "
-    # Crop (square), the crop syntax is ('<X, Y, WIDTH, HEIGHT >').
-    # So here we use 1920x1080 input, then crop to 1440x1080 so we have the same aspect ratio
-    f'qtivtransform crop="<240, 0, 1440, 1080>" ! '
-    # then resize to 224x224
-    f"video/x-raw,format=RGB,width={input_w},height={input_h} ! "
-    # Event when the crop/scale are done
-    "identity name=transform_done silent=false ! "
-    # Send out the resulting frame to an appsink (where we can pick it up from Python)
-    "queue max-size-buffers=2 leaky=downstream ! "
-    "appsink name=frame drop=true sync=false max-buffers=1 emit-signals=true "
-)
+pipeline = get_gstreamer_pipeline(args.video_source, args.video_input_width, args.video_input_height,
+    resize_mode=args.resize_mode, interpreter=interpreter)
 
-for frames_by_sink, marks in gst_grouped_frames(PIPELINE):
+for frames_by_sink, marks in gst_grouped_frames(pipeline):
     print(f"Frame ready")
     print('    Data:', end='')
     for key in list(frames_by_sink):
