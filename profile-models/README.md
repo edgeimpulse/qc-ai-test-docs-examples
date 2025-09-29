@@ -2,7 +2,7 @@
 
 This has been tested on QCS6490-based development boards (RB3 Gen 2 Vision Kit, Rubik Pi 3) running Ubuntu 24.04.
 
-1. Create a `models` directory, and add models in TFLite (`.lite` or `.tflite` extension), ONNX (`.onnx` or `.zip` extension), or SavedModel (`.zip` extension) format.
+1. Create a `models` directory, and add models in [TFLite](https://qc-ai-test.gitbook.io/qc-ai-test-docs/running-building-ai-models/lite-rt) (`.lite` or `.tflite` extension), [ONNX](https://qc-ai-test.gitbook.io/qc-ai-test-docs/running-building-ai-models/onnxruntime) (`.onnx` or `.zip` extension), or [context binary](https://qc-ai-test.gitbook.io/qc-ai-test-docs/running-building-ai-models/context-binaries) (`.bin` extension) format.
 2. Create a new venv and install packages:
 
     ```bash
