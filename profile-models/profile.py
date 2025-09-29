@@ -140,7 +140,22 @@ for model in models:
             row.append(f"{time_per_inference_ms:.4g}ms.")
 
         elif model_type == 'onnx':
-            input_shape, input_type = get_input_shape_onnx(path)
+            try:
+                input_shape, input_type = get_input_shape_onnx(path, load_qnn_htp=True)
+            except Exception as e:
+                print('get_input_shape_onnx load_qnn_htp=True failed:', e)
+                try:
+                    input_shape, input_type = get_input_shape_onnx(path, load_qnn_htp=False)
+
+                except Exception as e2:
+                    print('get_input_shape_onnx load_qnn_htp=False failed:', e2)
+                    row.append('FAIL') # input_shape
+                    row.append(variant) # variant
+                    row.append('FAIL') # NPU
+                    row.append('FAIL') # CPU
+                    table.append(row)
+                    continue
+
             row.append(input_shape)
             row.append(variant)
 
@@ -164,8 +179,8 @@ for model in models:
                 row.append('FAIL')
 
         elif model_type == 'ai_runtime_sdk':
-            row.append('?') # input shape
-            row.append(variant)
+            row.append('?') # input shape, https://github.com/quic/ai-engine-direct-helper/issues/24
+            row.append('?') # variant https://github.com/quic/ai-engine-direct-helper/issues/24
 
             time_per_inference_ms = run_perf_qnncontext(path)
             print(f'        NPU: {time_per_inference_ms:.4g}ms')

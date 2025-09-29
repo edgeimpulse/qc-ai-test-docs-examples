@@ -175,8 +175,16 @@ def get_input_shape_tflite(model):
 
     return ', '.join(shapes), ', '.join(types)
 
-def get_input_shape_onnx(model):
-    sess = ort.InferenceSession(model, providers=["CPUExecutionProvider"])
+def get_input_shape_onnx(model, load_qnn_htp):
+    # might be QNN stuff in here, so also load the provider
+    providers = []
+    if load_qnn_htp:
+        providers.append(("QNNExecutionProvider", {
+            "backend_type": "htp",
+        }))
+    providers.append('CPUExecutionProvider')
+
+    sess = ort.InferenceSession(model, providers=providers)
 
     shapes = []
     types = []
