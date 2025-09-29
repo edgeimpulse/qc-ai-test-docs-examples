@@ -36,7 +36,27 @@ for model in os.listdir(args.model_directory):
         if not os.path.exists(unzipped_folder):
             print(f'         Extracting... ', end='')
             with zipfile.ZipFile(model_path) as zf:
-                zf.extractall(unzipped_folder)
+                # find the common root (e.g. "model.onnx/")
+                members = zf.namelist()
+                common_prefix = os.path.commonprefix(members)
+                # make sure it's really a directory name
+                if not common_prefix.endswith('/'):
+                    common_prefix = os.path.dirname(common_prefix) + '/'
+
+                for member in members:
+                    # strip the prefix
+                    target = member[len(common_prefix):]
+                    if not target:  # skip the top-level folder itself
+                        continue
+                    target_path = os.path.join(unzipped_folder, target)
+
+                    # create any needed directories
+                    if member.endswith('/'):
+                        os.makedirs(target_path, exist_ok=True)
+                    else:
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        with open(target_path, 'wb') as f:
+                            f.write(zf.read(member))
             print('OK')
 
         unzipped_files = os.listdir(unzipped_folder)
@@ -76,29 +96,44 @@ for model in os.listdir(args.model_directory):
     elif model.lower().endswith('.onnx'):
         print(f'    Found {model}, checking quantization... ', end='')
 
-        if not is_onnx_int8_quantized(model_path):
-            model_path_i8 = os.path.join(converted_dir, model.lower().replace('.onnx', '_i8.onnx'))
-            if not os.path.exists(model_path_i8):
-                print('OK, not quantized yet')
-                print('        Quantizing... ', end='')
-                quantize_onnx_to_int8_nodata_v2(model_path, model_path_i8)
-                print('OK')
-            else:
-                print(f'OK, quantized version already exists in {model_path_i8}')
-
-            models.append({
-                'name': model,
-                'type': 'onnx',
-                'unquantized': model_path,
-                'quantized_8bit': model_path_i8,
-            })
-        else:
-            print('OK, already quantized')
+        if is_onnx_int8_quantized(model_path):
+            print('OK (quantized)')
             models.append({
                 'name': model,
                 'type': 'onnx',
                 'quantized_8bit': model_path,
             })
+        else:
+            print('OK (not quantized)')
+            models.append({
+                'name': model,
+                'type': 'onnx',
+                'unquantized': model_path,
+            })
+
+        # if not is_onnx_int8_quantized(model_path):
+        #     model_path_i8 = os.path.join(converted_dir, model.lower().replace('.onnx', '_i8.onnx'))
+        #     if not os.path.exists(model_path_i8):
+        #         print('OK, not quantized yet')
+        #         print('        Quantizing... ', end='')
+        #         quantize_onnx_to_int8_nodata_v2(model_path, model_path_i8)
+        #         print('OK')
+        #     else:
+        #         print(f'OK, quantized version already exists in {model_path_i8}')
+
+        #     models.append({
+        #         'name': model,
+        #         'type': 'onnx',
+        #         'unquantized': model_path,
+        #         'quantized_8bit': model_path_i8,
+        #     })
+        # else:
+        #     print('OK, already quantized')
+        #     models.append({
+        #         'name': model,
+        #         'type': 'onnx',
+        #         'quantized_8bit': model_path,
+        #     })
 print('')
 
 print('Testing models...')
@@ -136,15 +171,23 @@ for model in models:
             row.append(variant)
 
             if qnn_delegate_exists:
-                time_per_inference_ms = run_perf_onnx(path, use_npu=True)
-                print(f'        NPU: {time_per_inference_ms}ms')
-                row.append(f"{time_per_inference_ms:.4g}ms.")
+                try:
+                    time_per_inference_ms = run_perf_onnx(path, use_npu=True)
+                    print(f'        NPU: {time_per_inference_ms}ms')
+                    row.append(f"{time_per_inference_ms:.4g}ms.")
+                except Exception as e:
+                    print(e)
+                    row.append('FAIL')
             else:
                 row.append('-')
 
-            time_per_inference_ms = run_perf_onnx(path, use_npu=False)
-            print(f'        CPU: {time_per_inference_ms}ms')
-            row.append(f"{time_per_inference_ms:.4g}ms.")
+            try:
+                time_per_inference_ms = run_perf_onnx(path, use_npu=False)
+                print(f'        CPU: {time_per_inference_ms}ms')
+                row.append(f"{time_per_inference_ms:.4g}ms.")
+            except Exception as e:
+                print(e)
+                row.append('FAIL')
 
         else:
             raise Exception(f'Invalid type "{model_type}"')

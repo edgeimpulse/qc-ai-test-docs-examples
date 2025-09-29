@@ -17,7 +17,7 @@ import onnxruntime as ort, numpy as np
 
 def has_qnn_delegate():
     ld_path = os.environ.get("LD_LIBRARY_PATH", "")
-    for path in ld_path.split(":"):
+    for path in ld_path.split(":") + ['/usr/lib']:
         if not path:
             continue
         candidate = pathlib.Path(path) / "libQnnTFLiteDelegate.so"
