@@ -1,8 +1,9 @@
 import time, argparse, os, onnx, zipfile
 from helpers import is_onnx_int8_quantized, quantize_onnx_to_int8_nodata_v2, is_tflite_quantized, \
     convert_zipped_savedmodel_to_tflite, has_qnn_delegate, run_perf_tflite, run_perf_onnx, \
-    get_input_shape_tflite, get_input_shape_onnx
+    get_input_shape_tflite, get_input_shape_onnx, run_perf_qnncontext
 from tabulate import tabulate
+from qai_appbuilder import (QNNContext, Runtime, LogLevel, ProfilingLevel, PerfProfile, QNNConfig)
 
 parser = argparse.ArgumentParser(description='Profile models')
 parser.add_argument('--model-directory', type=str, required=True, help='Directory with models (.onnx, .tflite, .lite or .zip)')
@@ -15,15 +16,18 @@ if not os.path.exists(args.model_directory):
 qnn_delegate_exists, qnn_delegate_path = has_qnn_delegate()
 
 if not qnn_delegate_exists:
-    print('[WARN] libQnnTFLiteDelegate.so could not be found, not profiling QNN')
-    print('')
+    print('libQnnTFLiteDelegate.so could not be found')
+    exit(1)
+
+# Set up the QNN config (/usr/lib => where all QNN libraries are installed)
+QNNConfig.Config('/usr/lib', Runtime.HTP, LogLevel.WARN, ProfilingLevel.BASIC)
 
 converted_dir = os.path.join(args.model_directory, 'converted')
 os.makedirs(converted_dir, exist_ok=True)
 
 models = []
 
-# TODO: SavedModel conversion hangs...
+# TODO: SavedModel conversion hangs... Maybe we just skip all this.
 
 print(f'Scanning model directory ({args.model_directory})...')
 for model in os.listdir(args.model_directory):
@@ -61,29 +65,17 @@ for model in os.listdir(args.model_directory):
 
         unzipped_files = os.listdir(unzipped_folder)
 
-        # SavedModel
-        if any(f.endswith(".pb") for f in unzipped_files):
-            model_f32 = os.path.join(converted_dir, model + '_unquantized.tflite')
-            model_i8 = os.path.join(converted_dir, model + '_i8.tflite')
-
-            if not os.path.exists(model_f32) or not os.path.exists(model_i8):
-                print('        Converting to tflite... ', end='')
-                convert_zipped_savedmodel_to_tflite(unzipped_folder, model_f32, model_i8)
-                print('OK')
-
-            models.append({
-                'name': model,
-                'type': 'tflite',
-                'unquantized': model_f32,
-                'quantized_8bit': model_i8,
-            })
-            continue
-
-        elif any(f.endswith(".onnx") for f in unzipped_files):
+        onnx_file_found = False
+        if any(f.endswith(".onnx") for f in unzipped_files):
             for f in unzipped_files:
                 if f.endswith('.onnx'):
                     model = os.path.join(model, f)
                     model_path = os.path.join(unzipped_folder, f)
+                    onnx_file_found = True
+
+        if not onnx_file_found:
+            print('    Cannot find .onnx file in ZIP file, skipping')
+            continue
 
     if model.lower().endswith('.tflite') or model.lower().endswith('.lite'):
         print(f'    Found {model}')
@@ -111,29 +103,11 @@ for model in os.listdir(args.model_directory):
                 'unquantized': model_path,
             })
 
-        # if not is_onnx_int8_quantized(model_path):
-        #     model_path_i8 = os.path.join(converted_dir, model.lower().replace('.onnx', '_i8.onnx'))
-        #     if not os.path.exists(model_path_i8):
-        #         print('OK, not quantized yet')
-        #         print('        Quantizing... ', end='')
-        #         quantize_onnx_to_int8_nodata_v2(model_path, model_path_i8)
-        #         print('OK')
-        #     else:
-        #         print(f'OK, quantized version already exists in {model_path_i8}')
+    elif model.lower().endswith('.bin'):
+        print(f'    Found {model}')
 
-        #     models.append({
-        #         'name': model,
-        #         'type': 'onnx',
-        #         'unquantized': model_path,
-        #         'quantized_8bit': model_path_i8,
-        #     })
-        # else:
-        #     print('OK, already quantized')
-        #     models.append({
-        #         'name': model,
-        #         'type': 'onnx',
-        #         'quantized_8bit': model_path,
-        #     })
+        models.append({ 'name': model, 'type': 'ai_runtime_sdk', 'unknown_bin': model_path })
+
 print('')
 
 print('Testing models...')
@@ -156,13 +130,13 @@ for model in models:
 
             if qnn_delegate_exists:
                 time_per_inference_ms = run_perf_tflite(path, use_npu=True)
-                print(f'        NPU: {time_per_inference_ms}ms')
+                print(f'        NPU: {time_per_inference_ms:.4g}ms')
                 row.append(f"{time_per_inference_ms:.4g}ms.")
             else:
                 row.append('-')
 
             time_per_inference_ms = run_perf_tflite(path, use_npu=False)
-            print(f'        CPU: {time_per_inference_ms}ms')
+            print(f'        CPU: {time_per_inference_ms:.4g}ms')
             row.append(f"{time_per_inference_ms:.4g}ms.")
 
         elif model_type == 'onnx':
@@ -173,7 +147,7 @@ for model in models:
             if qnn_delegate_exists:
                 try:
                     time_per_inference_ms = run_perf_onnx(path, use_npu=True)
-                    print(f'        NPU: {time_per_inference_ms}ms')
+                    print(f'        NPU: {time_per_inference_ms:.4g}ms')
                     row.append(f"{time_per_inference_ms:.4g}ms.")
                 except Exception as e:
                     print(e)
@@ -183,11 +157,21 @@ for model in models:
 
             try:
                 time_per_inference_ms = run_perf_onnx(path, use_npu=False)
-                print(f'        CPU: {time_per_inference_ms}ms')
+                print(f'        CPU: {time_per_inference_ms:.4g}ms')
                 row.append(f"{time_per_inference_ms:.4g}ms.")
             except Exception as e:
                 print(e)
                 row.append('FAIL')
+
+        elif model_type == 'ai_runtime_sdk':
+            row.append('?') # input shape
+            row.append(variant)
+
+            time_per_inference_ms = run_perf_qnncontext(path)
+            print(f'        NPU: {time_per_inference_ms:.4g}ms')
+            row.append(f"{time_per_inference_ms:.4g}ms.")
+
+            row.append('-') # no CPU support
 
         else:
             raise Exception(f'Invalid type "{model_type}"')

@@ -14,6 +14,7 @@ from onnxruntime.quantization import (
 )
 from onnxruntime.quantization.calibrate import CalibrationDataReader
 import onnxruntime as ort, numpy as np
+from qai_appbuilder import (QNNContext, Runtime, LogLevel, ProfilingLevel, PerfProfile, QNNConfig)
 
 def has_qnn_delegate():
     ld_path = os.environ.get("LD_LIBRARY_PATH", "")
@@ -251,6 +252,29 @@ def run_perf_onnx(model, use_npu):
     start = time.perf_counter()
     for i in range(0, TIMES):
         _ = sess.run(None, feeds)
+    end = time.perf_counter()
+
+    time_per_inference_ms = ((end - start) * 1000) / TIMES
+
+    return time_per_inference_ms
+
+def run_perf_qnncontext(model):
+    # Create a new context (name, path to .bin file)
+    ctx = QNNContext(os.path.basename(model), model)
+
+    # No validation of this buffer afaik, so make it big enough
+    input_data = np.zeros((1, 1024, 1024, 3))
+
+    # run 5x to warm up
+    for i in range(0, 5):
+        ctx.Inference(input_data)
+
+    TIMES = 10
+
+    # Then run 10x
+    start = time.perf_counter()
+    for i in range(0, TIMES):
+        ctx.Inference(input_data)
     end = time.perf_counter()
 
     time_per_inference_ms = ((end - start) * 1000) / TIMES
