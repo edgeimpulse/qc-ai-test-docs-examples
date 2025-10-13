@@ -4,10 +4,10 @@ First, install the [Container Device Interface (CDI)](https://docs.docker.com/bu
 
 ```bash
 # RB3 Gen 2 Vision Kit / Rubik Pi 3
-sudo python3 install_cdi.py --file cdi/cdi-hw-acc-6490.json
+sudo python3 cdi/install_cdi.py --file cdi/cdi-hw-acc-6490.json
 
 # IQ-9075 EVK
-sudo python3 install_cdi.py --file cdi/cdi-hw-acc-9100.json
+sudo python3 cdi/install_cdi.py --file cdi/cdi-hw-acc-9100.json
 ```
 
 Now you can just pass `--device qualcomm.com/device=cdi-hw-acc` when you run a container to get NPU access.
