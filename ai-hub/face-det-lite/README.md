@@ -55,6 +55,24 @@ Demo of AI Hub's [Lightweight-Face-Detection](https://aihub.qualcomm.com/models/
 
 ![Face detection model](images/demo.png)
 
+> **Note on frame rate:** Many webcams limit the frame rate on higher resolutions. E.g. Logitech C920 cameras only spit out 5fps at 1080p using `v4l2src`. You can downscale the resolution via e.g. `--video-input-width 640 --video-input-height 480` to force a lower resolution.
+
+### Changing the output stream
+
+Writing the output is done through a GStreamer pipeline (by default encoding to h264 and saving to a file). You can modify [demo.py](./demo.py)'s `output_pipeline` if you'd like to change the format or stream somewhere else (e.g. RTSP out).
+
+## Webserver
+
+For easy remote viewing you can also start a webserver. This spins up a simple webserver with a websocket connection, which streams images.
+
+1. Start the server, e.g. via:
+
+    ```bash
+    python3 -u demo_webserver.py --video-source "v4l2src device=/dev/video3" --video-input-width 640 --video-input-height 480 | grep -v "<W>"
+    ```
+
+2. Open http://YOUR_IP:9300 (printed during startup) to see live predictions.
+
 ## Performance
 
 On RB3 Gen 2 Vision Kit on builtin camera 0:
@@ -65,3 +83,9 @@ Frame ready
     Faces: [[453, 33, 107, 149, 0.8500270247459412], [453, 35, 106, 147, 0.8500270247459412]]
     Timings: frame_ready_webcam→transform_done: 1.81ms, transform_done→pipeline_finished: 1.17ms, pipeline_finished→inference_done: 4.14ms, inference_done→postprocessing_done: 1.22ms (total 8.33ms)
 ```
+
+## Troubleshooting
+
+### No predictions
+
+Make sure your camera handle is correct. E.g. camera ID (`/dev/videoX`) might actually change without unplugging your device.
