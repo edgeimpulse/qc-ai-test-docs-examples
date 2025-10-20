@@ -4,6 +4,7 @@ from gi.repository import Gst, GLib
 from PIL import Image
 import urllib.request
 from contextlib import contextmanager
+from typing import Union
 
 Gst.init(None)
 
@@ -342,3 +343,114 @@ def mark_performance(name, marks):
         end = time.perf_counter()
         # Add an extra mark, so we have timing info for the complete pipeline
         marks[name] = list(marks.items())[-1][1] + (end - start)
+
+class OutputStreamer:
+    """
+    Push RGB numpy frames (H, W, 3) into a GStreamer pipeline via appsrc.
+    Auto-detects width/height from the first frame. Uses do-timestamp so FPS is
+    derived from real-time; no framerate needed in caps.
+
+    Example tails:
+      mp4_tail   = "videoconvert ! x264enc tune=zerolatency speed-preset=veryfast key-int-max=30 ! mp4mux faststart=true ! filesink location=out/out.mp4"
+      png_tail   = "videoconvert ! pngenc ! multifilesink location=out/frame-%05d.png"
+      preview    = "videoconvert ! autovideosink sync=false"
+      rtp_h264   = "videoconvert ! x264enc tune=zerolatency byte-stream=true key-int-max=30 ! rtph264pay config-interval=1 pt=96 ! udpsink host=127.0.0.1 port=5000"
+
+    If you want constant FPS, add:
+      "... ! videorate ! video/x-raw,framerate=30/1 ! <encoder> ..."
+    """
+    def __init__(self, pipeline_tail="videoconvert ! autovideosink sync=false"):
+        self.pipeline_tail = pipeline_tail
+        self.pipeline = None
+        self.appsrc = None
+        self.width = None
+        self.height = None
+        self._last_push_ns = None
+        self._ema_fps = None  # for info/logging only
+
+    def _build_pipeline(self, width, height):
+        self.width, self.height = int(width), int(height)
+        # No framerate in caps; timestamp from wall-clock
+        caps = f"video/x-raw,format=RGB,width={self.width},height={self.height}"
+        launch = (
+            f"appsrc name=src is-live=true block=false format=time do-timestamp=true "
+            f"caps={caps} ! {self.pipeline_tail}"
+        )
+        self.pipeline = Gst.parse_launch(launch)
+        self.appsrc = self.pipeline.get_by_name("src")
+        self.pipeline.set_state(Gst.State.PLAYING)
+
+    @staticmethod
+    def _as_rgb_numpy(frame: Union[np.ndarray, Image.Image]) -> np.ndarray:
+        """Return uint8 RGB ndarray (H,W,3) without unnecessary copies."""
+        if isinstance(frame, np.ndarray):
+            # Accept (H,W,3), (H,W) or (H,W,4)
+            if frame.ndim == 2:
+                frame = np.stack([frame]*3, axis=-1)
+            elif frame.ndim == 3 and frame.shape[2] == 4:
+                # Drop alpha quickly
+                frame = frame[:, :, :3]
+            if frame.ndim != 3 or frame.shape[2] != 3:
+                raise ValueError(f"Expected RGB array, got shape {frame.shape}")
+            if frame.dtype != np.uint8:
+                frame = frame.astype(np.uint8, copy=False)
+            return frame
+
+        if isinstance(frame, Image.Image):
+            # Cheap no-op if already RGB; otherwise convert.
+            if frame.mode != "RGB":
+                frame = frame.convert("RGB")
+            # Use np.asarray to avoid a copy when possible (contiguous RGB)
+            arr = np.asarray(frame, dtype=np.uint8)
+            if arr.ndim != 3 or arr.shape[2] != 3:
+                # Safety net (rare)
+                arr = np.array(frame.convert("RGB"), dtype=np.uint8)
+            return arr
+
+        raise TypeError(f"Unsupported frame type: {type(frame)}")
+
+    def push(self, frame: Union[np.ndarray, Image.Image]):
+        frame_rgb = self._as_rgb_numpy(frame)
+        frame_rgb = np.ascontiguousarray(frame_rgb)
+        if frame_rgb.ndim != 3 or frame_rgb.shape[2] != 3:
+            raise ValueError(f"Expected (H,W,3) RGB, got {frame_rgb.shape}")
+        if frame_rgb.dtype != np.uint8:
+            raise ValueError(f"Expected np.uint8 type, got {frame_rgb.dtype}")
+
+        h, w, _ = frame_rgb.shape
+        if self.pipeline is None:
+            self._build_pipeline(w, h)
+
+        # Optional: compute a smoothed FPS for logging
+        now = time.perf_counter_ns()
+        if self._last_push_ns is not None:
+            dt = (now - self._last_push_ns) / 1e9
+            if dt > 0:
+                inst_fps = 1.0 / dt
+                self._ema_fps = inst_fps if self._ema_fps is None else (0.9 * self._ema_fps + 0.1 * inst_fps)
+        self._last_push_ns = now
+
+        buf = Gst.Buffer.new_allocate(None, frame_rgb.nbytes, None)
+        buf.fill(0, frame_rgb.tobytes())
+
+        # With do-timestamp=true, we don’t need to set pts/dts/duration.
+        flow = self.appsrc.emit("push-buffer", buf)
+        if flow != Gst.FlowReturn.OK:
+            raise RuntimeError(f"push-buffer failed: {flow}")
+
+    def stop(self, eos_timeout_s=3.0):
+        if not self.pipeline:
+            return
+        bus = self.pipeline.get_bus()
+        try:
+            if self.appsrc:
+                self.appsrc.emit("end-of-stream")
+            bus.timed_pop_filtered(
+                int(eos_timeout_s * Gst.SECOND),
+                Gst.MessageType.EOS | Gst.MessageType.ERROR
+            )
+        finally:
+            self.pipeline.set_state(Gst.State.NULL)
+
+    def current_fps(self):
+        return self._ema_fps

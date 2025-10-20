@@ -4,8 +4,14 @@ Demo of AI Hub's [Lightweight-Face-Detection](https://aihub.qualcomm.com/models/
 
 ## Setup
 
-1. Ensure your RB3 Gen 2 Development Kit or Rubik Pi development board runs Ubuntu 24; and has IM SDK and AI Engine Direct installed ([setup instructions](https://qc-ai-test.gitbook.io)).
-2. Create a new venv, and install dependencies:
+1. Ensure your Dragonwing development board runs Ubuntu 24; and has IM SDK and AI Engine Direct installed ([setup instructions](https://qc-ai-test.gitbook.io)).
+2. Install some dependencies:
+
+    ```bash
+    sudo apt update && sudo apt install -y cmake build-essential pkg-config libcairo2-dev libgirepository1.0-dev v4l-utils python3-gst-1.0
+    ```
+
+3. Create a new venv, and install Python packages:
 
     ```bash
     python3.12 -m venv .venv
@@ -13,7 +19,7 @@ Demo of AI Hub's [Lightweight-Face-Detection](https://aihub.qualcomm.com/models/
     pip3 install -r requirements.txt
     ```
 
-3. Run the demo:
+4. Run the demo:
 
     **Built-in camera (RB3 Gen 2 Vision Kit):**
 
@@ -45,7 +51,7 @@ Demo of AI Hub's [Lightweight-Face-Detection](https://aihub.qualcomm.com/models/
     python3 -u demo.py --video-source "v4l2src device=/dev/video2" | grep -v "<W>"
     ```
 
-4. Images from the camera are stored in the `out/` directory.
+5. Video incl. overlay are stored in the `out/` directory.
 
 ![Face detection model](images/demo.png)
 

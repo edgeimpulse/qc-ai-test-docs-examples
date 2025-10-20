@@ -1,4 +1,4 @@
-from gst_helper import gst_grouped_frames, atomic_save_pillow_image, timing_marks_to_str, download_file_if_needed, mark_performance
+from gst_helper import gst_grouped_frames, atomic_save_pillow_image, timing_marks_to_str, download_file_if_needed, mark_performance, OutputStreamer
 import time, argparse, numpy as np
 from ai_edge_litert.interpreter import Interpreter, load_delegate
 from PIL import ImageDraw, Image
@@ -25,40 +25,47 @@ input_details = interpreter.get_input_details()
 # TODO: Also get original resolution out (so we can overlay on original resolution); see ex. here https://qc-ai-test.gitbook.io/qc-ai-test-docs/running-building-ai-models/im-sdk#ex-2-teeing-streams-and-multiple-outputs
 # TODO: Allow adding crop mode "fit-long"
 
+# Input pipeline
 pipeline = get_gstreamer_pipeline(args.video_source, args.video_input_width, args.video_input_height,
     resize_mode=args.resize_mode, interpreter=interpreter)
 
-for frames_by_sink, marks in gst_grouped_frames(pipeline):
-    print(f"Frame ready")
-    print('    Data:', end='')
-    for key in list(frames_by_sink):
-        print(f' name={key} {frames_by_sink[key].shape}', end='')
-    print('')
+# Output pipeline (write to .mp4 file)
+# TODO: Make this configurable
+output_pipeline = "videoconvert ! v4l2h264enc ! h264parse config-interval=-1 ! mp4mux faststart=true ! filesink location=out/out.mp4"
+output_streamer = OutputStreamer(pipeline_tail=output_pipeline)
 
-    with mark_performance('inference_done', marks):
-        # Set tensor with the image received in "frames_by_sink['frame']", add batch dim, and run inference
-        frame = frames_by_sink['frame']
-        # Facedet lite uses blue channel only
-        interpreter.set_tensor(input_details[0]['index'], rgb_numpy_arr_to_input_tensor(interpreter, arr=frame, single_channel_behavior='blue'))
-        interpreter.invoke()
+try:
+    for frames_by_sink, marks in gst_grouped_frames(pipeline):
+        print(f"Frame ready")
+        print('    Data:', end='')
+        for key in list(frames_by_sink):
+            print(f' name={key} {frames_by_sink[key].shape}', end='')
+        print('')
 
-    with mark_performance('postprocessing_done', marks):
-        # Get prediction (dequantized)
-        faces = face_det_lite_postprocessing(interpreter)
-        print('    Faces:', faces)
+        with mark_performance('inference_done', marks):
+            # Set tensor with the image received in "frames_by_sink['frame']", add batch dim, and run inference
+            frame = frames_by_sink['frame']
+            # Facedet lite uses blue channel only
+            interpreter.set_tensor(input_details[0]['index'], rgb_numpy_arr_to_input_tensor(interpreter, arr=frame, single_channel_behavior='blue'))
+            interpreter.invoke()
 
-    # Composite image using Pillow
-    # TODO: Do this on the original, unresized/cropped image
-    if frame.shape[2] == 1:
-        frame = np.squeeze(frame, axis=-1) # strip off the last dim if grayscale
-    img_out = Image.fromarray(frame).convert("RGB")
-    draw = ImageDraw.Draw(img_out)
-    for bb in faces:
-        L, T, W, H, score = bb
-        draw.rectangle([L, T, L + W, T + H], outline="#00FF00", width=3)
+        with mark_performance('postprocessing_done', marks):
+            # Get prediction (dequantized)
+            faces = face_det_lite_postprocessing(interpreter)
+            print('    Faces:', faces)
 
-    # And write to output image so we can debug
-    # TODO: Allow using GStreamer appsrc to pipe this somewhere
-    atomic_save_pillow_image(img=img_out, path='out/facedet.png')
+        # Composite image using Pillow
+        # TODO: Do this on the original, unresized/cropped image
+        if frame.shape[2] == 1:
+            frame = np.squeeze(frame, axis=-1) # strip off the last dim if grayscale
+        img_out = Image.fromarray(frame).convert("RGB")
+        draw = ImageDraw.Draw(img_out)
+        for bb in faces:
+            L, T, W, H, score = bb
+            draw.rectangle([L, T, L + W, T + H], outline="#00FF00", width=3)
 
-    print('    Timings:', timing_marks_to_str(marks))
+        output_streamer.push(img_out)
+
+        print('    Timings:', timing_marks_to_str(marks))
+finally:
+    output_streamer.stop()

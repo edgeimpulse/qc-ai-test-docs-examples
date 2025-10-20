@@ -1,1 +1,1 @@
-../../tutorial/gst_helper.py
+../../imsdk/tutorial/gst_helper.py

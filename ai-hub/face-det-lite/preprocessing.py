@@ -11,13 +11,16 @@ def get_gstreamer_pipeline(video_source, video_input_width, video_input_height, 
 
     qtivtransform = 'qtivtransform'
     if resize_mode == 'fit-short':
-        crop_region = centered_aspect_crop_rect(
-            input_w=input_w,
-            input_h=input_h,
-            cam_w=video_input_width,
-            cam_h=video_input_height
-        )
-        qtivtransform = f'{qtivtransform} crop="{crop_region}"'
+        if input_w == video_input_width and input_h == video_input_height:
+            pass
+        else:
+            crop_region = centered_aspect_crop_rect(
+                input_w=input_w,
+                input_h=input_h,
+                cam_w=video_input_width,
+                cam_h=video_input_height
+            )
+            qtivtransform = f'{qtivtransform} crop="{crop_region}"'
 
     return (
         # Video source
