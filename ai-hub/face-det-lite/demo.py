@@ -12,8 +12,7 @@ parser.add_argument('--video-input-height', type=int, required=False, default=10
 parser.add_argument('--resize-mode', type=str, required=False, default='fit-short', help='Crop method (either "squash" or "fit-short")')
 args, unknown = parser.parse_known_args()
 
-# Load TFLite model and allocate tensors, note: this is a 224x224 model with uint8 input!
-# If your models are different, then you'll need to update the pipeline below.
+# Load TFLite model and allocate tensors
 interpreter = Interpreter(
     model_path='face_det_lite-lightweight-face-detection-w8a8.tflite',
     experimental_delegates=[load_delegate("libQnnTFLiteDelegate.so", options={"backend_type": "htp"})]     # Use NPU

@@ -2,9 +2,10 @@ import asyncio
 import signal
 import threading, io, base64, json
 from pathlib import Path
-from typing import Set, Optional, Iterable, Union
+from typing import Set, Optional, Iterable, Union, Callable
 import socket
 from aiohttp import web, WSMsgType
+import os
 
 class ThreadedAiohttpServer:
     """
@@ -87,12 +88,30 @@ class ThreadedAiohttpServer:
         img.save(buffer, format="JPEG", quality=85)
         img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-        self.broadcast(json.dumps({
+        if not self._loop:
+            return
+
+        data = json.dumps({
             'type': 'image',
             'dataUrl': "data:image/jpeg;base64," + img_base64,
+        })
+        asyncio.run_coroutine_threadsafe(self._broadcast_coro(data, lambda ws: ws.camera_preview == True), self._loop)
+
+    def broadcast_classification(self, classification):
+        self.broadcast(json.dumps({
+            'type': 'classification',
+            'result': classification,
         }))
 
     # ------------- Internal: thread / loop -------------
+
+    async def _index_or_ws(self, request: web.Request) -> web.StreamResponse:
+        # check if client requests websocket upgrade
+        if request.headers.get("Upgrade", "").lower() == "websocket":
+            return await self._ws_handler(request)
+
+        # otherwise just serve index.html
+        return web.FileResponse(os.path.join(str(self.static_dir), 'index.html'))
 
     def _run_loop(self) -> None:
         self._loop = asyncio.new_event_loop()
@@ -114,14 +133,13 @@ class ThreadedAiohttpServer:
         # Create the app and routes
         self._app = web.Application()
 
-        # WebSocket handler first (route order matters)
-        self._app.router.add_get("/ws", self._ws_handler)
-
         # Static file serving at root
         # - If a file doesn't exist, aiohttp returns 404 automatically.
         if not self.static_dir.exists():
             # Create empty directory to avoid errors if missing
             self.static_dir.mkdir(parents=True, exist_ok=True)
+
+        self._app.router.add_get("/", self._index_or_ws)
         self._app.router.add_static("/", str(self.static_dir), show_index=self.show_index)
 
         # Runner + Site
@@ -156,6 +174,7 @@ class ThreadedAiohttpServer:
 
     async def _ws_handler(self, request: web.Request) -> web.StreamResponse:
         ws = web.WebSocketResponse(heartbeat=30)
+        ws.camera_preview = False
         await ws.prepare(request)
 
         with self._clients_lock:
@@ -164,8 +183,25 @@ class ThreadedAiohttpServer:
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
-                    # Echo back or handle messages as needed
-                    await ws.send_str(f"echo: {msg.data}")
+                    try:
+                        data = json.loads(msg.data)
+                        if not 'type' in data:
+                            raise Exception('Missing "type" in message')
+
+                        if data['type'] == 'toggle-camera-preview':
+                            if not 'enabled' in data:
+                                raise Exception('Missing "enabled" in message (required for type "toggle-camera-preview")')
+                            if data['enabled']:
+                                ws.camera_preview = True
+                            else:
+                                ws.camera_preview = False
+
+                    except Exception as e:
+                        ws.send_str(json.dumps({
+                            'type': 'error',
+                            'original_message': msg.data,
+                            'error': str(e),
+                        }))
                 elif msg.type == WSMsgType.BINARY:
                     await ws.send_bytes(msg.data)  # echo
                 elif msg.type == WSMsgType.ERROR:
@@ -177,7 +213,11 @@ class ThreadedAiohttpServer:
 
         return ws
 
-    async def _broadcast_coro(self, data: Union[str, bytes]) -> None:
+    async def _broadcast_coro(
+        self,
+        data: Union[str, bytes],
+        check: Callable[[object], bool] = lambda ws: True,  # optional check whether we should send (default TRUE)
+    ) -> None:
         # Send to all currently open sockets
         with self._clients_lock:
             clients: Iterable[web.WebSocketResponse] = list(self._clients)
@@ -186,6 +226,8 @@ class ThreadedAiohttpServer:
         for ws in clients:
             if ws.closed:
                 to_remove.append(ws)
+                continue
+            if not check(ws):
                 continue
             try:
                 if isinstance(data, (bytes, bytearray)):

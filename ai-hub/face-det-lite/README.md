@@ -73,6 +73,8 @@ For easy remote viewing you can also start a webserver. This spins up a simple w
 
 2. Open http://YOUR_IP:9300 (printed during startup) to see live predictions.
 
+(Note: this adheres to the same format that Arduino App Lab uses for Edge Impulse models)
+
 ## Performance
 
 On RB3 Gen 2 Vision Kit on builtin camera 0:

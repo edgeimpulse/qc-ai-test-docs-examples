@@ -16,15 +16,23 @@
     </div>
 
     <script>
-        const socket = new WebSocket(location.protocol + '//' + location.host + '/ws');
-        socket.onopen = () => console.log('onopen');
+        const socket = new WebSocket(location.protocol + '//' + location.host);
+
+        socket.onopen = () => {
+            console.log('socket.onopen');
+            socket.send(JSON.stringify({
+                type: 'toggle-camera-preview',
+                enabled: true,
+            }));
+        };
+
         socket.onmessage = msg => {
             const data = JSON.parse(msg.data);
             if (data.type === 'image' && data.dataUrl) {
                 document.querySelector('#img').src = data.dataUrl;
             }
             else {
-                console.warn('Failed to handle', data);
+                console.log('socket.onmessage', data);
             }
         };
     </script>

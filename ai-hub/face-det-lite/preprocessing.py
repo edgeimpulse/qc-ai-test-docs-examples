@@ -44,7 +44,7 @@ def get_gstreamer_pipeline(video_source, video_input_width, video_input_height, 
 def rgb_numpy_arr_to_input_tensor(interpreter, arr, single_channel_behavior: str = 'grayscale'):
     d = interpreter.get_input_details()[0]
     shape = [int(x) for x in d["shape"]]  # e.g. [1, H, W, C] or [1, C, H, W]
-    dtype = d["dtype"]
+    input_tensor_dtype = d["dtype"]
     scale, zp = d.get("quantization", (0.0, 0))
 
     if len(shape) != 4 or shape[0] != 1:
@@ -71,20 +71,27 @@ def rgb_numpy_arr_to_input_tensor(interpreter, arr, single_channel_behavior: str
         # Keep shape as HWC with C=1
         arr = gray[..., np.newaxis]
 
-    # HWC -> correct layout
+    # image is HWC, but model requires NCHW? -> correct layout
     if layout == "NCHW":
         arr = np.transpose(arr, (2, 0, 1))  # (C,H,W)
 
-    # Scale 0..1 (all AI Hub image models use this)
-    arr = (arr / 255.0).astype(np.float32)
+    # Scale 0..1 (all AI Hub image models use this), your model might use different scaling behavior
+    arr = arr.astype(np.float32)
+    arr *= 1.0 / 255.0
 
     # Quantize if needed
     if scale and float(scale) != 0.0:
-        q = np.rint(arr / float(scale) + int(zp))
-        if dtype == np.uint8:
-            arr = np.clip(q, 0, 255).astype(np.uint8)
+        inv = np.float32(1.0 / scale)
+
+        np.multiply(arr, inv, out=arr)            # arr = arr * (1/scale)
+        if zp:
+            np.add(arr, np.float32(zp), out=arr)  # arr += zp
+        np.rint(arr, out=arr)                     # round to nearest (ties to even)
+
+        if input_tensor_dtype == np.uint8:        # cast to int8/uint8 depending on reqs
+            arr = np.clip(arr, 0, 255).astype(input_tensor_dtype)
         else:
-            arr = np.clip(q, -128, 127).astype(np.int8)
+            arr = np.clip(arr, -128, 127).astype(input_tensor_dtype)
 
     return np.expand_dims(arr, 0)  # add batch
 

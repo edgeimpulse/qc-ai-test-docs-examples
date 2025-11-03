@@ -14,8 +14,7 @@ parser.add_argument('--resize-mode', type=str, required=False, default='fit-shor
 parser.add_argument('--port', type=int, required=False, default=9300, help='Port for the application')
 args, unknown = parser.parse_known_args()
 
-# Load TFLite model and allocate tensors, note: this is a 224x224 model with uint8 input!
-# If your models are different, then you'll need to update the pipeline below.
+# Load TFLite model and allocate tensors
 interpreter = Interpreter(
     model_path='face_det_lite-lightweight-face-detection-w8a8.tflite',
     experimental_delegates=[load_delegate("libQnnTFLiteDelegate.so", options={"backend_type": "htp"})]     # Use NPU
@@ -68,7 +67,11 @@ try:
             L, T, W, H, score = bb
             draw.rectangle([L, T, L + W, T + H], outline="#00FF00", width=3)
 
+        # Broadcast image and predictions over websocket in Arduino App Lab format
         srv.broadcast_img(img_out)
+        srv.broadcast_classification({
+            'bounding_boxes': [{'label': 'face', 'x': L, 'y': T, 'width': W, 'height': H, 'value': score} for L, T, W, H, score in faces]
+        })
 
         print('    Timings:', timing_marks_to_str(marks))
 finally:
