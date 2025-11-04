@@ -1,8 +1,9 @@
-from gst_helper import gst_grouped_frames, atomic_save_pillow_image, timing_marks_to_str, download_file_if_needed, mark_performance, OutputStreamer
+from gst_helper import gst_grouped_frames, timing_marks_to_str, mark_performance, OutputStreamer, has_library, \
+    get_gstreamer_input_pipeline, get_gstreamer_output_pipeline_mp4
 import time, argparse, numpy as np
 from ai_edge_litert.interpreter import Interpreter, load_delegate
 from PIL import ImageDraw, Image
-from preprocessing import rgb_numpy_arr_to_input_tensor, centered_aspect_crop_rect, get_gstreamer_pipeline
+from preprocessing import rgb_numpy_arr_to_input_tensor
 from postprocessing import face_det_lite_postprocessing
 
 parser = argparse.ArgumentParser(description='Face Detection demo on GPU/NPU')
@@ -15,7 +16,8 @@ args, unknown = parser.parse_known_args()
 # Load TFLite model and allocate tensors
 interpreter = Interpreter(
     model_path='face_det_lite-lightweight-face-detection-w8a8.tflite',
-    experimental_delegates=[load_delegate("libQnnTFLiteDelegate.so", options={"backend_type": "htp"})]     # Use NPU
+    # Use NPU if QNN is available
+    experimental_delegates=[load_delegate("libQnnTFLiteDelegate.so", options={"backend_type": "htp"})] if has_library('libQnnTFLiteDelegate.so') else None,
 )
 interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
@@ -25,16 +27,15 @@ input_details = interpreter.get_input_details()
 # TODO: Allow adding crop mode "fit-long"
 
 # Input pipeline
-pipeline = get_gstreamer_pipeline(args.video_source, args.video_input_width, args.video_input_height,
+input_pipeline = get_gstreamer_input_pipeline(args.video_source, args.video_input_width, args.video_input_height,
     resize_mode=args.resize_mode, interpreter=interpreter)
 
 # Output pipeline (write to .mp4 file)
-# TODO: Make this configurable
-output_pipeline = "videoconvert ! v4l2h264enc ! h264parse config-interval=-1 ! mp4mux faststart=true ! filesink location=out/out.mp4"
-output_streamer = OutputStreamer(pipeline_tail=output_pipeline)
+# TODO: Make this configurable through CLI
+output_streamer = OutputStreamer(pipeline_tail=get_gstreamer_output_pipeline_mp4('out/out.mp4'))
 
 try:
-    for frames_by_sink, marks in gst_grouped_frames(pipeline):
+    for frames_by_sink, marks in gst_grouped_frames(input_pipeline):
         print(f"Frame ready")
         print('    Data:', end='')
         for key in list(frames_by_sink):

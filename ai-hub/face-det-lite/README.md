@@ -4,6 +4,8 @@ Demo of AI Hub's [Lightweight-Face-Detection](https://aihub.qualcomm.com/models/
 
 ## Setup
 
+### Dragonwing development board
+
 1. Ensure your Dragonwing development board runs Ubuntu 24; and has IM SDK and AI Engine Direct installed ([setup instructions](https://qc-ai-test.gitbook.io)).
 2. Install some dependencies:
 
@@ -74,6 +76,56 @@ For easy remote viewing you can also start a webserver. This spins up a simple w
 2. Open http://YOUR_IP:9300 (printed during startup) to see live predictions.
 
 (Note: this adheres to the same format that Arduino App Lab uses for Edge Impulse models)
+
+### macOS
+
+1. Install GStreamer and libffi:
+
+    ```bash
+    brew install gstreamer libffi
+    ```
+
+2. Create a venv and install dependencies:
+
+    ```bash
+    # Create a new venv
+    python3.12 -m venv .venv
+    source .venv/bin/activate
+
+    # Make sure libffi can be found (required for PyGObject)
+    export PKG_CONFIG_PATH="/opt/homebrew/opt/libffi/lib/pkgconfig:$PKG_CONFIG_PATH"
+    export CPATH="/opt/homebrew/opt/libffi/include:$CPATH"
+    export LIBRARY_PATH="/opt/homebrew/opt/libffi/lib:$LIBRARY_PATH"
+
+    # Install dependencies
+    pip3 install -r requirements.txt
+    ```
+
+3. Run the demo:
+
+    ```bash
+    # List other cameras via 'gst-device-monitor-1.0 Video/Source'
+
+    python3 demo.py --video-source "avfvideosrc device-index=0"
+    ```
+
+    Video incl. overlay are stored in the `out/` directory.
+
+    ![Face detection model](images/demo.png)
+
+4. Or run the webserver via:
+
+    ```bash
+    python3 demo_webserver.py --video-source "avfvideosrc device-index=0"
+    ```
+
+    And open http://localhost:9300 to see live predictions.
+
+> If you have issues with the built-in webcams, e.g. no images streaming anymore - run:
+
+```bash
+sudo killall VDCAssistant
+```
 
 ## Performance
 

@@ -5,6 +5,11 @@ from PIL import Image
 import urllib.request
 from contextlib import contextmanager
 from typing import Union
+import ctypes
+from ctypes.util import find_library
+import signal
+import contextlib
+from preprocessing import centered_aspect_crop_rect
 
 Gst.init(None)
 
@@ -39,6 +44,9 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
 
     pipeline = Gst.parse_launch(pipeline_str)
 
+    bus = pipeline.get_bus()
+    bus.add_signal_watch()
+
     # discover identities and appsinks (recursively)
     identity_elems = []
     appsinks = []
@@ -61,7 +69,6 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
     walk(pipeline)
 
     expected_sinks = {s.get_name() for s in appsinks}
-    identity_names = [e.get_name() for e in identity_elems]
 
     # ---- Track segment per PAD
     seg_by_pad = {}          # pad -> Gst.Segment
@@ -89,7 +96,6 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
     ledger = collections.OrderedDict()
     LEDGER_MAX = 256
     outq = queue.Queue(maxsize=4)
-    frame_index = 0
 
     def ensure_entry(pts):
         if pts not in ledger:
@@ -262,6 +268,17 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
 
     pipeline.set_state(Gst.State.PLAYING)
 
+    def _on_bus_msg(bus, msg):
+        nonlocal stop_evt
+        t = msg.type
+        if t == Gst.MessageType.ERROR:
+            err, dbg = msg.parse_error()
+            stop_evt.set()
+        elif t == Gst.MessageType.EOS:
+            stop_evt.set()
+
+    bus_handler_id = bus.connect("message", _on_bus_msg)
+
     all_frame_periods = []
     frame_period_ns = -1
 
@@ -275,10 +292,19 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
             ','.join(str(x) for x in all_frame_periods) + ']')
 
     try:
-        while True:
-            pts, frames_by_sink, marks = get_latest(outq)
-            yield frames_by_sink, marks
+        with _signal_to_eos(pipeline) as stop_evt:
+            # Main loop: poll your sinks and yield groups until told to stop.
+            while not stop_evt.is_set():
+                pts, frames_by_sink, marks = get_latest(outq)
+                yield frames_by_sink, marks
     finally:
+        try:
+            if bus_handler_id:
+                bus.disconnect(bus_handler_id)
+            bus.remove_signal_watch()
+        except Exception:
+            pass
+
         pipeline.set_state(Gst.State.NULL)
 
 def atomic_save_image(frame, path):
@@ -442,15 +468,150 @@ class OutputStreamer:
         if not self.pipeline:
             return
         bus = self.pipeline.get_bus()
+
+        # 1) Request EOS
         try:
             if self.appsrc:
                 self.appsrc.emit("end-of-stream")
-            bus.timed_pop_filtered(
-                int(eos_timeout_s * Gst.SECOND),
-                Gst.MessageType.EOS | Gst.MessageType.ERROR
-            )
-        finally:
-            self.pipeline.set_state(Gst.State.NULL)
+
+            self.pipeline.send_event(Gst.Event.new_eos())
+        except Exception as e:
+            print('[stop] ERROR', e)
+
+        # 2) Drain GLib main context until EOS/ERROR or timeout
+        ctx = GLib.MainContext.default()
+        deadline = time.monotonic() + float(eos_timeout_s)
+        saw_terminal = False
+        while time.monotonic() < deadline:
+            # Drive message delivery even if you don't have a running GLib loop
+            while ctx.pending():
+                ctx.iteration(False)
+
+            msg = bus.pop_filtered(Gst.MessageType.EOS | Gst.MessageType.ERROR)
+            if msg is not None:
+                if msg.type == Gst.MessageType.ERROR:
+                    err, dbg = msg.parse_error()
+                    print(f"[stop] ERROR before EOS: {err} {dbg or ''}")
+                else:
+                    print("[stop] EOS observed")
+                saw_terminal = True
+                break
+
+            time.sleep(0.01)  # gentle poll
+
+        self.pipeline.set_state(Gst.State.NULL)
+        return saw_terminal
 
     def current_fps(self):
         return self._ema_fps
+
+def has_library(name: str) -> bool:
+    # Step 1 — Try to locate a platform-specific filename
+    lib = find_library(name)
+    if lib is None:
+        # Might already be a full filename/path — try loading directly
+        lib = name
+
+    # Step 2 — Try loading it
+    try:
+        ctypes.CDLL(lib)
+        return True
+    except OSError:
+        return False
+
+def has_gst_element(name: str) -> bool:
+    return Gst.ElementFactory.find(name) is not None
+
+@contextlib.contextmanager
+def _signal_to_eos(pipeline):
+    """
+    Install SIGINT/SIGTERM handlers that request EOS on the pipeline.
+    Restores previous handlers on exit.
+    """
+    stop_evt = threading.Event()
+
+    def _request_shutdown():
+        # Runs in GLib context; safe to touch GStreamer
+        try:
+            pipeline.send_event(Gst.Event.new_eos())
+        except Exception as e:
+            print("Failed to send EOS:", e)
+        return False  # remove the idle source
+
+    def _on_signal(signum, frame):
+        # Signal handlers must be quick; schedule EOS on GLib loop
+        stop_evt.set()
+        GLib.idle_add(_request_shutdown)
+
+    prev = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, _on_signal)
+
+    try:
+        yield stop_evt
+    finally:
+        # restore old handlers
+        for sig, handler in prev.items():
+            signal.signal(sig, handler)
+
+from gst_helper import has_gst_element
+import os
+
+def get_gstreamer_input_pipeline(video_source, video_input_width, video_input_height, resize_mode, interpreter):
+    if resize_mode != 'fit-short' and resize_mode != 'squash':
+        raise Exception(f'Invalid value for --resize-mode ("{resize_mode}"). Should be "fit-short" or "squash".')
+
+    input_details = interpreter.get_input_details()
+
+    input_h = input_details[0]['shape'][1]
+    input_w = input_details[0]['shape'][2]
+
+    resize_crop_pipeline = ''
+
+    if has_gst_element('qtivtransform'):
+        # IM SDK
+        resize_crop_pipeline = 'qtivtransform'
+        if resize_mode == 'fit-short':
+            if input_w == video_input_width and input_h == video_input_height:
+                pass
+            else:
+                crop_region = centered_aspect_crop_rect(
+                    input_w=input_w,
+                    input_h=input_h,
+                    cam_w=video_input_width,
+                    cam_h=video_input_height
+                )
+                resize_crop_pipeline = f'{resize_crop_pipeline} crop="{crop_region}"'
+    else:
+        # Fallback to CPU
+        # TODO: Figure out fit-short / squash
+        resize_crop_pipeline = f"videoconvert ! aspectratiocrop aspect-ratio=1/1 ! videoscale"
+
+    return (
+        # Video source
+        f"{video_source} ! "
+        # Properties for the video source
+        f"video/x-raw,width={video_input_width},height={video_input_height} ! "
+        # An identity element so we can track when a new frame is ready (so we can calc. processing time)
+        "identity name=frame_ready_webcam silent=false ! "
+
+        # Resize and crop
+        f'{resize_crop_pipeline} ! '
+        # then resize to required resolution
+        f"video/x-raw,format=RGB,width={input_w},height={input_h} ! "
+        # Event when the crop/scale are done
+        "identity name=transform_done silent=false ! "
+        # Send out the resulting frame to an appsink (where we can pick it up from Python)
+        "queue max-size-buffers=2 leaky=downstream ! "
+        "appsink name=frame drop=true sync=false max-buffers=1 emit-signals=true "
+    )
+
+def get_gstreamer_output_pipeline_mp4(out_file):
+    os.makedirs(os.path.dirname(out_file), exist_ok=True)
+
+    if has_gst_element('v4l2h264enc'):
+        return f"videoconvert ! v4l2h264enc ! h264parse config-interval=-1 ! mp4mux faststart=true ! filesink location={out_file}"
+    elif has_gst_element('vtenc_h264'):
+        return f"videoconvert ! vtenc_h264 realtime=true allow-frame-reordering=false bitrate=4000000 ! h264parse config-interval=1 ! video/x-h264,stream-format=avc,alignment=au ! mp4mux faststart=true ! filesink location={out_file}"
+    else:
+        raise Exception('Cannot find either "v4l2h264enc" or "vtenc_h264" GStreamer element')

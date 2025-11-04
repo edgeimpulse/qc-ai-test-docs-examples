@@ -1,8 +1,8 @@
-from gst_helper import gst_grouped_frames, atomic_save_pillow_image, timing_marks_to_str, download_file_if_needed, mark_performance, OutputStreamer
+from gst_helper import gst_grouped_frames, timing_marks_to_str, mark_performance, get_gstreamer_input_pipeline, has_library
 import time, argparse, numpy as np
 from ai_edge_litert.interpreter import Interpreter, load_delegate
 from PIL import ImageDraw, Image
-from preprocessing import rgb_numpy_arr_to_input_tensor, centered_aspect_crop_rect, get_gstreamer_pipeline
+from preprocessing import rgb_numpy_arr_to_input_tensor
 from postprocessing import face_det_lite_postprocessing
 from webserver import ThreadedAiohttpServer, get_ip_addr
 
@@ -17,7 +17,8 @@ args, unknown = parser.parse_known_args()
 # Load TFLite model and allocate tensors
 interpreter = Interpreter(
     model_path='face_det_lite-lightweight-face-detection-w8a8.tflite',
-    experimental_delegates=[load_delegate("libQnnTFLiteDelegate.so", options={"backend_type": "htp"})]     # Use NPU
+    # Use NPU if QNN is available
+    experimental_delegates=[load_delegate("libQnnTFLiteDelegate.so", options={"backend_type": "htp"})] if has_library('libQnnTFLiteDelegate.so') else None,
 )
 interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
@@ -27,7 +28,7 @@ input_details = interpreter.get_input_details()
 # TODO: Allow adding crop mode "fit-long"
 
 # Input pipeline
-pipeline = get_gstreamer_pipeline(args.video_source, args.video_input_width, args.video_input_height,
+pipeline = get_gstreamer_input_pipeline(args.video_source, args.video_input_width, args.video_input_height,
     resize_mode=args.resize_mode, interpreter=interpreter)
 
 # Start a web server

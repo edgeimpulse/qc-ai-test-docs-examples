@@ -1,11 +1,10 @@
 import asyncio
-import signal
 import threading, io, base64, json
 from pathlib import Path
 from typing import Set, Optional, Iterable, Union, Callable
 import socket
 from aiohttp import web, WSMsgType
-import os
+import os, sys
 
 class ThreadedAiohttpServer:
     """
@@ -248,11 +247,12 @@ def get_ip_addr():
     # (either from hostname lookup or from a dummy UDP connection)
 
     # 1. Attempt to get the first non-127.* address from hostname lookup
-    hostname_ips = socket.gethostbyname_ex(socket.gethostname())[2]
-    non_loopback_ips = [ip for ip in hostname_ips if not ip.startswith("127.")]
-    first_hostname_ip = non_loopback_ips[:1]  # might be empty
-    if (len(first_hostname_ip) > 0):
-        return first_hostname_ip[0]
+    if sys.platform == "linux" or sys.platform == "linux2":
+        hostname_ips = socket.gethostbyname_ex(socket.gethostname())[2]
+        non_loopback_ips = [ip for ip in hostname_ips if not ip.startswith("127.")]
+        first_hostname_ip = non_loopback_ips[:1]  # might be empty
+        if (len(first_hostname_ip) > 0):
+            return first_hostname_ip[0]
 
     # 2. Alternative: create a UDP socket to 8.8.8.8 (Google DNS) just to learn our outbound IP
     try:
