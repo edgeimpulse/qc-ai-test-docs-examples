@@ -1,5 +1,5 @@
-from gst_helper import gst_grouped_frames, timing_marks_to_str, mark_performance, OutputStreamer, has_library, \
-    get_gstreamer_input_pipeline, get_gstreamer_output_pipeline_mp4
+from gst_helper import gst_grouped_frames, timing_marks_to_str, mark_performance, OutputStreamer, has_library
+from gst_pipeline_helper import get_gstreamer_input_pipeline, get_gstreamer_output_pipeline_mp4
 import time, argparse, numpy as np
 from ai_edge_litert.interpreter import Interpreter, load_delegate
 from PIL import ImageDraw, Image

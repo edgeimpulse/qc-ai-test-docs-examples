@@ -1,4 +1,5 @@
-from gst_helper import gst_grouped_frames, timing_marks_to_str, mark_performance, get_gstreamer_input_pipeline, has_library
+from gst_helper import gst_grouped_frames, timing_marks_to_str, mark_performance, has_library
+from gst_pipeline_helper import get_gstreamer_input_pipeline
 import time, argparse, numpy as np
 from ai_edge_litert.interpreter import Interpreter, load_delegate
 from PIL import ImageDraw, Image
