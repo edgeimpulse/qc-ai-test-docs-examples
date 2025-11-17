@@ -6,11 +6,20 @@ Demo of AI Hub's [Lightweight-Face-Detection](https://aihub.qualcomm.com/models/
 
 ### Dragonwing development board
 
-1. Ensure your Dragonwing development board runs Ubuntu 24; and has IM SDK and AI Engine Direct installed ([setup instructions](https://qc-ai-test.gitbook.io)).
-2. Install some dependencies:
+1. Ensure your Dragonwing development board runs Ubuntu 24.
+2. Install GStreamer and the IM SDK:
 
     ```bash
-    sudo apt update && sudo apt install -y cmake build-essential pkg-config libcairo2-dev libgirepository1.0-dev v4l-utils python3-gst-1.0
+    if [ ! -f /etc/apt/sources.list.d/ubuntu-qcom-iot-ubuntu-qcom-ppa-noble.list ]; then
+        sudo apt-add-repository -y ppa:ubuntu-qcom-iot/qcom-ppa
+    fi
+
+    # Install GStreamer / IM SDK
+    sudo apt update
+    sudo apt install -y --no-install-recommends gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps gstreamer1.0-plugins-qcom-good gstreamer1.0-plugins-bad
+
+    # Install Python bindings for GStreamer, and build dependencies
+    sudo apt install -y cmake build-essential v4l-utils libcairo2-dev pkg-config python3-dev libgirepository1.0-dev gir1.2-gstreamer-1.0 python3-gst-1.0
     ```
 
 3. Create a new venv, and install Python packages:
@@ -143,3 +152,11 @@ Frame ready
 ### No predictions
 
 Make sure your camera handle is correct. E.g. camera ID (`/dev/videoX`) might actually change without unplugging your device.
+
+### gst_parse_error: no element "h264parse" (1)
+
+`h264parse` is in the `gstreamer1.0-plugins-bad` package. You can install it via:
+
+```bash
+sudo apt install -y gstreamer1.0-plugins-bad
+```
