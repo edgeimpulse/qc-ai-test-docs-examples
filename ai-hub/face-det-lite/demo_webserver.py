@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent / "common"))
+
 from gst_helper import gst_grouped_frames, timing_marks_to_str, mark_performance, has_library
 from gst_pipeline_helper import get_gstreamer_input_pipeline
 import time, argparse, numpy as np

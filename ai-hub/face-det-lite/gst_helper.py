@@ -1,1 +1,0 @@
-../../imsdk/tutorial/gst_helper.py

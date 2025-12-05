@@ -37,6 +37,8 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
     """
     timeout_s = 0.100
 
+    print('gst_grouped_frames', pipeline_str)
+
     if (pipeline_str.strip().startswith('!')):
         raise Exception('First argument of pipeline is empty, did you not set the IMSDK_VIDEO_SOURCE env variable? E.g.:\n' +
             '    export IMSDK_VIDEO_SOURCE="v4l2src device=/dev/video2"')
@@ -123,9 +125,13 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
         elem.set_property("signal-handoffs", True)
         elem.connect("handoff", on_identity_handoff)
 
+    handlers = {}
+    on_new_sample_error = False
+
     # appsink: grab frame, store, maybe emit group
     def on_new_sample(sink):
-        # nonlocal frame_index
+        nonlocal on_new_sample_error
+
         sample = sink.emit("pull-sample")
         buf = sample.get_buffer()
         caps = sample.get_caps().get_structure(0)
@@ -155,11 +161,23 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
                 else:
                     raise RuntimeError(f"Unsupported format: {fmt}")
 
-                rowstride = mapinfo.size // h
-                arr = np.frombuffer(mapinfo.data, dtype=np.uint8, count=h * rowstride)
-                arr = arr.reshape(h, rowstride // C, C)[:, :w, :].copy()
+                rowstride = mapinfo.size // h  # 772
+
+                # read full padded image
+                buf_np = np.frombuffer(mapinfo.data, dtype=np.uint8,
+                                    count=h * rowstride)
+                buf_np = buf_np.reshape(h, rowstride)   # (H, padded_row)
+
+                # remove padding and reshape to RGB
+                arr = buf_np[:, : w * C].reshape(h, w, C).copy()
             else:
                 arr = np.frombuffer(mapinfo.data, dtype=np.uint8).copy()
+        except:
+            on_new_sample_error = True
+            for i, s in enumerate(appsinks):
+                s.disconnect(handlers[i])
+            outq.put_nowait([ -99, [], [] ])
+            raise
         finally:
             buf.unmap(mapinfo)
 
@@ -177,9 +195,9 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
                 pass
         return Gst.FlowReturn.OK
 
-    for s in appsinks:
+    for i, s in enumerate(appsinks):
         s.set_property("emit-signals", True)
-        s.connect("new-sample", on_new_sample)
+        handlers[i] = s.connect("new-sample", on_new_sample)
 
     # timeout: flush partials
     def on_timeout(_):
@@ -295,6 +313,8 @@ def gst_grouped_frames(pipeline_str: str, element_properties = {}):
             # Main loop: poll your sinks and yield groups until told to stop.
             while not stop_evt.is_set():
                 pts, frames_by_sink, marks = get_latest(outq)
+                if on_new_sample_error:
+                    break
                 yield frames_by_sink, marks
     finally:
         try:
@@ -395,6 +415,10 @@ class OutputStreamer:
 
     def _build_pipeline(self, width, height):
         self.width, self.height = int(width), int(height)
+
+        print('WIDTH', self.width)
+        print('HEIGHT', self.height)
+
         # No framerate in caps; timestamp from wall-clock
         caps = f"video/x-raw,format=RGB,width={self.width},height={self.height}"
         launch = (
@@ -446,6 +470,17 @@ class OutputStreamer:
         if self.pipeline is None:
             self._build_pipeline(w, h)
 
+        # GStreamer tends to align RGB rowstride to 4 bytes
+        row_bytes = w * 3
+        stride = (row_bytes + 3) & ~3
+
+        # Make padded buffer (H, stride)
+        flat = frame_rgb.reshape(h, row_bytes)
+        padded = np.zeros((h, stride), dtype=np.uint8)
+        padded[:, :row_bytes] = flat
+
+        frame_rgb_aligned = padded.ravel()
+
         # Optional: compute a smoothed FPS for logging
         now = time.perf_counter_ns()
         if self._last_push_ns is not None:
@@ -455,8 +490,8 @@ class OutputStreamer:
                 self._ema_fps = inst_fps if self._ema_fps is None else (0.9 * self._ema_fps + 0.1 * inst_fps)
         self._last_push_ns = now
 
-        buf = Gst.Buffer.new_allocate(None, frame_rgb.nbytes, None)
-        buf.fill(0, frame_rgb.tobytes())
+        buf = Gst.Buffer.new_allocate(None, frame_rgb_aligned.nbytes, None)
+        buf.fill(0, frame_rgb_aligned.tobytes())
 
         # With do-timestamp=true, we don’t need to set pts/dts/duration.
         flow = self.appsrc.emit("push-buffer", buf)
