@@ -34,6 +34,8 @@ input_details = interpreter.get_input_details()
 input_pipeline = get_gstreamer_input_pipeline(args.video_source, args.video_input_width, args.video_input_height,
     resize_mode=args.resize_mode, interpreter=interpreter)
 
+print('input_pipeline', input_pipeline)
+
 # Output pipeline (write to .mp4 file)
 # TODO: Make this configurable through CLI
 output_streamer = OutputStreamer(pipeline_tail=get_gstreamer_output_pipeline_mp4('out/out.mp4'))

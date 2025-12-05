@@ -89,3 +89,41 @@ def centered_aspect_crop_rect(input_w: int, input_h: int,
         crop_h &= ~1
 
     return f"<{x}, {y}, {crop_w}, {crop_h}>"
+
+def videocrop_aspect_crop_rect(input_w: int, input_h: int,
+                               cam_w: int, cam_h: int, even: bool = True) -> str:
+    """
+    Compute a centered crop rectangle so that (crop_w / crop_h) == (input_w / input_h).
+    Returns a string like left=x1 right=x2 top=y1 bottom=y2
+    To be used with videocrop
+    """
+    assert input_w > 0 and input_h > 0 and cam_w > 0 and cam_h > 0
+    target_ar = input_w / input_h
+    cam_ar = cam_w / cam_h
+
+    if cam_ar > target_ar:
+        # Too wide -> crop width
+        crop_h = cam_h
+        crop_w = int(round(crop_h * target_ar))
+        x = (cam_w - crop_w) // 2
+        y = 0
+    else:
+        # Too tall or equal -> crop height
+        crop_w = cam_w
+        crop_h = int(round(crop_w / target_ar))
+        x = 0
+        y = (cam_h - crop_h) // 2
+
+    if even:
+        # Make everything even (helps with YUV/hardware paths)
+        x &= ~1
+        y &= ~1
+        crop_w &= ~1
+        crop_h &= ~1
+
+    left = x
+    top = y
+    right = x
+    bottom = y
+
+    return f"left={left} top={top} right={right} bottom={bottom}"

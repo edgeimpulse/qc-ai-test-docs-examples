@@ -1,4 +1,4 @@
-from preprocessing import centered_aspect_crop_rect
+from preprocessing import centered_aspect_crop_rect, videocrop_aspect_crop_rect
 from gst_helper import has_gst_element
 import os
 
@@ -15,7 +15,7 @@ def get_gstreamer_input_pipeline(video_source, video_input_width, video_input_he
 
     if has_gst_element('qtivtransform'):
         # IM SDK
-        resize_crop_pipeline = 'qtivtransform'
+        resize_crop_pipeline = f'qtivtransform ! video/x-raw,format=RGB,width={input_w},height={input_h}'
         if resize_mode == 'fit-short':
             if input_w == video_input_width and input_h == video_input_height:
                 pass
@@ -26,11 +26,27 @@ def get_gstreamer_input_pipeline(video_source, video_input_width, video_input_he
                     cam_w=video_input_width,
                     cam_h=video_input_height
                 )
-                resize_crop_pipeline = f'{resize_crop_pipeline} crop="{crop_region}"'
+                resize_crop_pipeline = f'qtivtransform crop="{crop_region}" ! video/x-raw,format=RGB,width={input_w},height={input_h}'
     else:
         # Fallback to CPU
-        # TODO: Figure out fit-short / squash
-        resize_crop_pipeline = f"videoconvert ! aspectratiocrop aspect-ratio=1/1 ! videoscale"
+        if resize_mode == 'squash':
+            resize_crop_pipeline = f'videoconvert ! videoscale ! video/x-raw,format=RGB,width={input_w},height={input_h}'
+        else:
+            # fit-short
+            crop_region = videocrop_aspect_crop_rect(
+                input_w=input_w,
+                input_h=input_h,
+                cam_w=video_input_width,
+                cam_h=video_input_height
+            )
+
+            resize_crop_pipeline = (
+                'videoconvert ! '
+                'videoscale ! '
+                f'videocrop {crop_region} ! '
+                f'videoscale ! '
+                f'video/x-raw,format=RGB,width={input_w},height={input_h}'
+            )
 
     return (
         # Video source
@@ -42,8 +58,6 @@ def get_gstreamer_input_pipeline(video_source, video_input_width, video_input_he
 
         # Resize and crop
         f'{resize_crop_pipeline} ! '
-        # then resize to required resolution
-        f"video/x-raw,format=RGB,width={input_w},height={input_h} ! "
         # Event when the crop/scale are done
         "identity name=transform_done silent=false ! "
         # Send out the resulting frame to an appsink (where we can pick it up from Python)
