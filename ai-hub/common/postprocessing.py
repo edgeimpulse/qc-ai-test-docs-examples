@@ -23,8 +23,8 @@ POSENET_PART_NAMES = [
 def face_det_lite_postprocessing(interpreter):
     # Grab 3 output tensors and (optionally) dequantize
     hm = read_output_tensor(interpreter, 0)
-    box = read_output_tensor(interpreter, 0)
-    landmark = read_output_tensor(interpreter, 0)
+    box = read_output_tensor(interpreter, 1)
+    landmark = read_output_tensor(interpreter, 2)
 
     # Taken from https://github.com/quic/ai-hub-models/blob/8cdeb11df6cc835b9b0b0cf9b602c7aa83ebfaf8/qai_hub_models/utils/bounding_box_processing.py#L369
     def get_iou(boxA: np.ndarray, boxB: np.ndarray) -> float:
